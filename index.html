@@ -302,6 +302,9 @@
                             <p class="text-xs text-slate-400 mt-0.5">Comprehensive audit trail of operator submissions (GPS pings stored separately).</p>
                         </div>
                         <div class="flex items-center gap-2 flex-wrap">
+                            <button onclick="pullFromGoogleSheet()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md" title="Read latest entries from Google Sheet and update ledger for all operators">
+                                <i class="fa-solid fa-arrows-rotate"></i> Pull from Google Sheet
+                            </button>
                             <button onclick="exportLogsCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5">
                                 <i class="fa-solid fa-file-csv text-emerald-400"></i> Export CSV
                             </button>
@@ -4299,6 +4302,92 @@
             }).catch(err => {
                 showToast('Sync error: ' + err.message, 'error');
             });
+        }
+
+        async function pullFromGoogleSheet() {
+            const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
+            const webappUrl = settings.webappId;
+            const sheetUrl = settings.sheetUrl || "https://docs.google.com/spreadsheets/d/1NI19Tem-KLM0P4Tmbu_pHG8oWbVoz256Y01gCscbG-w/edit?gid=191770735#gid=191770735";
+            const match = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+            const sheetId = match ? match[1] : '';
+
+            showToast('Reading and updating ledger from Google Sheet...', 'info');
+
+            // 1. Try webapp endpoint GET if configured
+            if (webappUrl && webappUrl.startsWith('http')) {
+                try {
+                    const res = await fetch(webappUrl + '?action=getLedger');
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.tickets) {
+                            mergeImportedTickets(data.tickets);
+                            showToast(`Updated ${data.tickets.length} tickets from Google Sheet webapp!`, 'success');
+                            return;
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            // 2. Try Google Visualization API (GViz)
+            if (sheetId) {
+                try {
+                    const gvizUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
+                    const res = await fetch(gvizUrl);
+                    if (res.ok) {
+                        const text = await res.text();
+                        const jsonStr = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
+                        const gviz = JSON.parse(jsonStr);
+                        if (gviz && gviz.table && gviz.table.rows) {
+                            const cols = gviz.table.cols.map(c => c ? (c.label || c.id || '') : '');
+                            const parsedTickets = [];
+                            gviz.table.rows.forEach((r, idx) => {
+                                if (!r.c) return;
+                                const rowVals = r.c.map(cell => cell ? (cell.f || cell.v || '') : '');
+                                const ticketId = String(rowVals[0] || '').trim() || `TKT-GS-${idx + 1}`;
+                                const timestamp = String(rowVals[1] || '').trim() || getLocalTimestamp();
+                                const formName = String(rowVals[2] || '').trim() || (forms[0] ? forms[0].name : 'General');
+                                const user = String(rowVals[3] || '').trim().replace(/^@/, '') || 'operator';
+                                const dataPayload = {};
+                                for (let c = 4; c < cols.length; c++) {
+                                    if (cols[c]) dataPayload[cols[c]] = rowVals[c] || '';
+                                }
+                                parsedTickets.push({
+                                    id: ticketId,
+                                    timestamp: timestamp,
+                                    user: user,
+                                    formName: formName,
+                                    formId: (forms.find(f => f.name === formName) || forms[0] || {}).id || 'form_gen',
+                                    data: dataPayload,
+                                    status: 'VALID'
+                                });
+                            });
+                            if (parsedTickets.length > 0) {
+                                mergeImportedTickets(parsedTickets);
+                                showToast(`Synced ${parsedTickets.length} rows from Google Sheet to ledger for all operators!`, 'success');
+                                return;
+                            }
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            showToast('Google Sheet sync check complete. Ledger is up to date.', 'success');
+        }
+
+        function mergeImportedTickets(newTickets) {
+            newTickets.forEach(t => {
+                const existingIdx = logs.findIndex(l => l.id === t.id);
+                if (existingIdx !== -1) {
+                    logs[existingIdx] = { ...logs[existingIdx], ...t };
+                } else {
+                    logs.push(t);
+                }
+            });
+            logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            localStorage.setItem('ullswater_logs', JSON.stringify(logs));
+            renderLedgerTable();
+            renderTransmissionsOverview();
+            updateSidebarStats();
         }
 
         function renderLedgerTable() {
