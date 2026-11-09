@@ -326,6 +326,12 @@
                         </div>
                     </div>
 
+                    <div id="scanned-ref-box" class="bg-slate-900 border border-amber-500/40 rounded-2xl p-4 space-y-1.5 shadow-sm">
+                        <label class="block text-xs font-semibold text-amber-300 uppercase tracking-wider"><i class="fa-solid fa-qrcode mr-1"></i> Scanned Ticket No. (reference)</label>
+                        <input type="text" id="scanned-ref-input" readonly placeholder="— nothing scanned yet —" class="w-full bg-slate-950 border border-amber-500/40 text-amber-300 font-mono font-bold text-sm rounded-xl px-3.5 py-2.5">
+                        <div id="scanned-ref-note" class="text-[10px] text-slate-500 font-mono">Filled automatically when a printed ticket QR is scanned. Saved in the ledger and in the Google Sheet "Scanned Ticket" column.</div>
+                    </div>
+
                     <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
                         <div class="flex items-center space-x-3">
                             <div class="bg-blue-500/10 p-2.5 rounded-xl text-blue-400 border border-blue-500/20">
@@ -379,6 +385,7 @@
                                 <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-700/80">
                                     <tr>
                                         <th class="p-3.5">Ticket ID</th>
+                                        <th class="p-3.5">Scanned Ticket</th>
                                         <th class="p-3.5">Local Timestamp</th>
                                         <th class="p-3.5">Operator</th>
                                         <th class="p-3.5">Form Name</th>
@@ -809,6 +816,57 @@
                             </div>
                         </div>
 
+                        <div id="conn-panel-script-help" class="space-y-4 pt-2">
+                            <div class="bg-slate-950 border border-amber-500/30 rounded-xl p-4 space-y-2">
+                                <div class="flex items-center justify-between gap-2">
+                                    <div class="text-xs font-bold text-amber-300"><i class="fa-solid fa-code mr-1"></i> Google Apps Script (adds the "Scanned Ticket" column to your sheet)</div>
+                                    <button type="button" onclick="copyAppsScript()" class="bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">Copy Script</button>
+                                </div>
+                                <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this, replace everything → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the /exec URL above. Re-deploy after any change.</p>
+                                <textarea id="apps-script-code" readonly rows="8" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet receiver
+// Creates the tab + columns automatically, incl. "Scanned Ticket".
+// Re-sending the same Ticket ID updates its row (no duplicates).
+const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
+
+function doPost(e) {
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const d = JSON.parse(e.postData.contents);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const tab = d.targetTab || d.formName || 'Ledger';
+    const sh = ss.getSheetByName(tab) || ss.insertSheet(tab);
+    if (sh.getLastColumn() === 0) sh.getRange(1, 1, 1, FIXED.length).setValues([FIXED]);
+
+    let headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+    const row = {
+      'Ticket ID': d.id, 'Timestamp': d.timestamp, 'Operator': d.user,
+      'Form Name': d.formName, 'Status': d.status || '',
+      'Scanned Ticket': d['Scanned Ticket'] || d.sourceTicket || ''
+    };
+    Object.keys(d.data || {}).forEach(function (k) { if (k !== 'Scanned Ticket') row[k] = d.data[k]; });
+
+    // add any missing column (e.g. "Scanned Ticket" on an existing sheet)
+    Object.keys(row).forEach(function (k) {
+      if (headers.indexOf(k) &lt; 0) { headers.push(k); sh.getRange(1, headers.length).setValue(k); }
+    });
+    const values = headers.map(function (h) { return row[h] !== undefined ? row[h] : ''; });
+
+    const idCol = headers.indexOf('Ticket ID') + 1;
+    let target = 0;
+    if (idCol > 0 &amp;&amp; sh.getLastRow() > 1) {
+      const ids = sh.getRange(2, idCol, sh.getLastRow() - 1, 1).getValues();
+      for (let i = 0; i &lt; ids.length; i++) if (String(ids[i][0]) === String(d.id)) { target = i + 2; break; }
+    }
+    if (target) sh.getRange(target, 1, 1, values.length).setValues([values]);
+    else sh.appendRow(values);
+
+    return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+  } finally { lock.releaseLock(); }
+}
+</textarea>
+                            </div>
+                        </div>
+
                         <div id="conn-panel-sheets" class="space-y-4 pt-2 hidden">
                             <div>
                                 <label class="block text-xs font-medium text-slate-400 uppercase mb-1">Google Sheet / Excel Web View URL (for Mirroring)</label>
@@ -1215,6 +1273,7 @@
         let activeFilteredOperator = 'ALL';
         let currentPrintLayout = 'a4';
         let pendingScanRef = '';
+        const SCAN_REF_LABEL = 'Scanned Ticket';
 
         let qrCodeObj = null;
         let qrAutoEntryScanner = null;
@@ -1831,7 +1890,21 @@
             });
         }
 
-        function resetCurrentFormInputs() { renderActiveFormFields(); }
+        function resetCurrentFormInputs() {
+            pendingScanRef = ''; setScannedRefField('', ''); renderActiveFormFields(); }
+
+        function copyAppsScript() {
+            const t = document.getElementById('apps-script-code');
+            t.select();
+            try { navigator.clipboard.writeText(t.value); } catch (e) { document.execCommand('copy'); }
+            showToast('Apps Script copied', 'success');
+        }
+
+        function setScannedRefField(ref, loggedId) {
+            const i = document.getElementById('scanned-ref-input'), n = document.getElementById('scanned-ref-note');
+            if (i) i.value = ref || '';
+            if (n) n.innerText = ref ? (loggedId ? `Logged as ${loggedId} · reference sent to Google Sheet column "Scanned Ticket"` : 'Scanned — logging…') : 'Filled automatically when a printed ticket QR is scanned. Saved in the ledger and in the Google Sheet "Scanned Ticket" column.';
+        }
 
         function handleFormSubmit(e) {
             if(e) e.preventDefault();
@@ -1844,18 +1917,23 @@
                 if(el) recordData[field.label] = el.value;
             });
 
+            // Reference of the printed ticket that was scanned -> stored inside the data entry itself
+            if (pendingScanRef) recordData[SCAN_REF_LABEL] = pendingScanRef;
+
             const ticketId = 'TKT-2026-' + String(Math.floor(1000 + Math.random() * 9000));
             const newLog = {
                 id: ticketId, timestamp: getLocalTimestamp(), user: activeUser || 'admin',
                 formName: form.name, formId: form.id, data: recordData, status: 'VALID',
                 sourceTicket: pendingScanRef || ''
             };
+            const usedScanRef = pendingScanRef;
             pendingScanRef = '';
 
             logs.unshift(newLog);
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
             renderLedgerTable();
             postLogToGoogleSheet(newLog, form.name);
+            setScannedRefField(usedScanRef, ticketId);
             openTicketModal(ticketId);
             showToast(`Ticket ${ticketId} created & logged!`, 'success');
         }
@@ -1866,7 +1944,13 @@
                 fetch(settings.webappId, {
                     method: 'POST', mode: 'no-cors',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...logEntry, targetTab: sheetTabName })
+                    body: JSON.stringify({
+                        ...logEntry,
+                        targetTab: sheetTabName,
+                        sourceTicket: logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || '',
+                        scannedFromTicket: logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || '',
+                        'Scanned Ticket': logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || ''
+                    })
                 });
             }
         }
@@ -1882,11 +1966,12 @@
             const tbody = document.getElementById('ledger-table-body');
             tbody.innerHTML = logs.map(log => `
                 <tr class="hover:bg-slate-900/50 border-b border-slate-800/60">
-                    <td class="p-3.5 font-bold text-blue-400"><button onclick="openTicketModal('${log.id}')">${log.id}</button>${log.sourceTicket ? `<div class="text-[10px] text-amber-300 font-normal mt-0.5" title="Created by scanning this ticket's QR">↩ scanned: ${log.sourceTicket}</div>` : ''}</td>
+                    <td class="p-3.5 font-bold text-blue-400"><button onclick="openTicketModal('${log.id}')">${log.id}</button></td>
+                    <td class="p-3.5">${(log.sourceTicket || (log.data && log.data[SCAN_REF_LABEL])) ? `<span class="bg-amber-500/10 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold"><i class="fa-solid fa-qrcode mr-1"></i>${log.sourceTicket || log.data[SCAN_REF_LABEL]}</span>` : '<span class="text-slate-600">—</span>'}</td>
                     <td class="p-3.5 text-slate-400">${log.timestamp}</td>
                     <td class="p-3.5 text-slate-200">@${log.user}</td>
                     <td class="p-3.5 text-blue-300 font-semibold">${log.formName}</td>
-                    <td class="p-3.5 text-slate-300 truncate max-w-xs">${Object.entries(log.data || {}).map(([k, v]) => `${k}: ${v}`).join(' | ')}</td>
+                    <td class="p-3.5 text-slate-300 truncate max-w-xs">${Object.entries(log.data || {}).filter(([k]) => k !== SCAN_REF_LABEL).map(([k, v]) => `${k}: ${v}`).join(' | ')}</td>
                     <td class="p-3.5"><span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full text-[10px]">VALID</span></td>
                     <td class="p-3.5 text-right space-x-1">
                         <button onclick="openTicketModal('${log.id}')" class="bg-slate-800 text-blue-300 px-2 py-1 rounded text-xs"><i class="fa-solid fa-ticket"></i></button>
@@ -2130,8 +2215,10 @@
                 const el = document.getElementById(`edit_field_${k}`);
                 if(el) log.data[k] = el.value;
             });
+            if (log.data && log.data[SCAN_REF_LABEL] !== undefined) log.sourceTicket = log.data[SCAN_REF_LABEL];
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
             renderLedgerTable();
+            postLogToGoogleSheet(log, log.formName);
             closeEditModal();
         }
 
@@ -2186,7 +2273,7 @@
         function processExtractedQrCsvData(csvText) {
             try {
                 const lines = csvText.replace(/\r/g, '').trim().split('\n');
-                if (lines.length < 2) return;
+                if (lines.length < 2) { showToast('QR scanned but it is not a ticket CSV record', 'error'); return; }
                 const headers = parseCsvRow(lines[0]);
                 const values = parseCsvRow(lines[1]);
                 let map = {};
@@ -2201,6 +2288,7 @@
                         return;
                     }
                     pendingScanRef = scannedTicket;
+                    setScannedRefField(scannedTicket, '');
                 }
 
                 if (map["FormName"]) {
@@ -2218,7 +2306,7 @@
                 triggerFieldCalculations();
                 showToast(scannedTicket ? `Scanned ${scannedTicket} — form filled & logged` : "QR CSV Extracted & Form Filled!", "success");
                 setTimeout(() => handleFormSubmit(), 300);
-            } catch(e) {}
+            } catch(e) { showToast('Could not read ticket QR data', 'error'); }
         }
 
         // Form Designer Workspace
@@ -2324,11 +2412,11 @@
         function setConnectionType(type) {
             localStorage.setItem('ullswater_conn_type', type);
             if(type === 'token') {
-                document.getElementById('conn-panel-token').classList.remove('hidden');
+                document.getElementById('conn-panel-token').classList.remove('hidden'); document.getElementById('conn-panel-script-help').classList.remove('hidden');
                 document.getElementById('conn-panel-sheets').classList.add('hidden');
             } else {
                 document.getElementById('conn-panel-sheets').classList.remove('hidden');
-                document.getElementById('conn-panel-token').classList.add('hidden');
+                document.getElementById('conn-panel-token').classList.add('hidden'); document.getElementById('conn-panel-script-help').classList.add('hidden');
             }
         }
         function saveConnectionSettings() {
@@ -2386,8 +2474,8 @@
         function clearSystemDatabase() { localStorage.clear(); location.reload(); }
 
         function exportLogsCSV() {
-            let csv = 'Ticket ID,Timestamp,Operator,Form Name,Status,Scanned From Ticket,Data\n';
-            logs.forEach(l => csv += `"${l.id}","${l.timestamp}","${l.user}","${l.formName}","${l.status}","${l.sourceTicket || ''}","${JSON.stringify(l.data || {}).replace(/"/g, '""')}"\n`);
+            let csv = 'Ticket ID,Timestamp,Operator,Form Name,Status,Scanned Ticket,Data\n';
+            logs.forEach(l => csv += `"${l.id}","${l.timestamp}","${l.user}","${l.formName}","${l.status}","${l.sourceTicket || (l.data && l.data[SCAN_REF_LABEL]) || ''}","${JSON.stringify(l.data || {}).replace(/"/g, '""')}"\n`);
             const blob = new Blob([csv], { type: 'text/csv' });
             const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob); a.download = 'Ullswater_Ledger.csv'; a.click();
         }
