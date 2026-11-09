@@ -904,6 +904,7 @@
                     <div class="text-center">
                         <div id="ticket-qrcode-container" class="mx-auto flex justify-center bg-white border-2 border-black rounded-md"></div>
                         <span class="font-mono text-[10px] font-bold text-black block mt-1 uppercase tracking-wider">Scan to Auto-Fill Entry</span>
+                        <span id="ticket-qr-ref" class="font-mono text-[11px] font-black text-black block mt-0.5 bg-yellow-200 px-1.5 py-0.5 rounded">TKT-----</span>
                         <span id="ticket-qr-status" class="font-mono text-[9px] text-slate-500 block mt-0.5">Checking QR…</span>
                         <button id="ticket-qr-download" type="button" onclick="downloadTicketQrPng()" class="mt-1 text-[10px] font-semibold text-blue-700 underline">Save QR as PNG</button>
                     </div>
@@ -1213,6 +1214,7 @@
         let clickMapForCenterActive = false;
         let activeFilteredOperator = 'ALL';
         let currentPrintLayout = 'a4';
+        let pendingScanRef = '';
 
         let qrCodeObj = null;
         let qrAutoEntryScanner = null;
@@ -1845,8 +1847,10 @@
             const ticketId = 'TKT-2026-' + String(Math.floor(1000 + Math.random() * 9000));
             const newLog = {
                 id: ticketId, timestamp: getLocalTimestamp(), user: activeUser || 'admin',
-                formName: form.name, formId: form.id, data: recordData, status: 'VALID'
+                formName: form.name, formId: form.id, data: recordData, status: 'VALID',
+                sourceTicket: pendingScanRef || ''
             };
+            pendingScanRef = '';
 
             logs.unshift(newLog);
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
@@ -1878,7 +1882,7 @@
             const tbody = document.getElementById('ledger-table-body');
             tbody.innerHTML = logs.map(log => `
                 <tr class="hover:bg-slate-900/50 border-b border-slate-800/60">
-                    <td class="p-3.5 font-bold text-blue-400"><button onclick="openTicketModal('${log.id}')">${log.id}</button></td>
+                    <td class="p-3.5 font-bold text-blue-400"><button onclick="openTicketModal('${log.id}')">${log.id}</button>${log.sourceTicket ? `<div class="text-[10px] text-amber-300 font-normal mt-0.5" title="Created by scanning this ticket's QR">↩ scanned: ${log.sourceTicket}</div>` : ''}</td>
                     <td class="p-3.5 text-slate-400">${log.timestamp}</td>
                     <td class="p-3.5 text-slate-200">@${log.user}</td>
                     <td class="p-3.5 text-blue-300 font-semibold">${log.formName}</td>
@@ -2002,6 +2006,7 @@
 
             const qrContainer = document.getElementById('ticket-qrcode-container');
             qrContainer.innerHTML = '';
+            document.getElementById('ticket-qr-ref').innerText = 'REF: ' + log.id + (log.sourceTicket ? '  ← scanned from ' + log.sourceTicket : '');
             renderScannableQr(qrContainer, csvHeaders.join(",") + "\n" + csvValues.join(","), log.id);
             JsBarcode("#ticket-barcode-svg", log.id, { format: "CODE128", width: 1.5, height: 35, displayValue: false });
             document.getElementById('ticket-barcode-text').innerText = log.id;
@@ -2076,7 +2081,7 @@
                 <div style="text-align:${is58 ? 'left' : 'right'}"><b style="font-family:monospace">${escHtml(get('ticket-id-display'))}</b><div class="sub">${escHtml(get('ticket-timestamp-display'))}</div></div></div>
                 <div class="meta"><div><b>Operator</b>${escHtml(get('ticket-operator-display'))}</div><div><b>Form</b>${escHtml(get('ticket-formname-display'))}</div></div>
                 <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>
-                <div class="codes">${qrImg}<div class="scan">Scan to Auto-Fill Entry</div>${barcode}<div style="font-family:monospace;font-size:9px">${escHtml(get('ticket-barcode-text'))}</div></div>
+                <div class="codes">${qrImg}<div class="scan">Scan to Auto-Fill Entry</div><div style="font-family:monospace;font-weight:bold;font-size:${is58 ? '11px' : '14px'};background:#fef08a;display:inline-block;padding:2px 8px;border-radius:4px">REF: ${escHtml(get('ticket-id-display'))}</div>${barcode}<div style="font-family:monospace;font-size:9px">${escHtml(get('ticket-barcode-text'))}</div></div>
                 <script>window.addEventListener('load', function(){ setTimeout(function(){ try{ window.focus(); window.print(); }catch(e){} }, 500); });<\/script>
                 </body></html>`;
         }
@@ -2187,6 +2192,17 @@
                 let map = {};
                 headers.forEach((h, i) => map[h] = values[i] || '');
 
+                // Keep a reference to the ticket that was scanned
+                const scannedTicket = map["Ticket_ID"] || '';
+                if (scannedTicket) {
+                    const dup = logs.filter(l => l.sourceTicket === scannedTicket).length;
+                    if (dup > 0 && !confirm(`Ticket ${scannedTicket} was already scanned ${dup} time(s). Log it again?`)) {
+                        showToast(`Scan cancelled: ${scannedTicket} already recorded`, 'error');
+                        return;
+                    }
+                    pendingScanRef = scannedTicket;
+                }
+
                 if (map["FormName"]) {
                     const matched = forms.find(f => f.name.toLowerCase() === map["FormName"].toLowerCase());
                     if (matched) { activeFormId = matched.id; renderFormSelector(); renderActiveFormFields(); }
@@ -2200,7 +2216,7 @@
                     });
                 }
                 triggerFieldCalculations();
-                showToast("QR CSV Extracted & Form Filled!", "success");
+                showToast(scannedTicket ? `Scanned ${scannedTicket} — form filled & logged` : "QR CSV Extracted & Form Filled!", "success");
                 setTimeout(() => handleFormSubmit(), 300);
             } catch(e) {}
         }
@@ -2370,8 +2386,8 @@
         function clearSystemDatabase() { localStorage.clear(); location.reload(); }
 
         function exportLogsCSV() {
-            let csv = 'Ticket ID,Timestamp,Operator,Form Name,Status,Data\n';
-            logs.forEach(l => csv += `"${l.id}","${l.timestamp}","${l.user}","${l.formName}","${l.status}","${JSON.stringify(l.data || {}).replace(/"/g, '""')}"\n`);
+            let csv = 'Ticket ID,Timestamp,Operator,Form Name,Status,Scanned From Ticket,Data\n';
+            logs.forEach(l => csv += `"${l.id}","${l.timestamp}","${l.user}","${l.formName}","${l.status}","${l.sourceTicket || ''}","${JSON.stringify(l.data || {}).replace(/"/g, '""')}"\n`);
             const blob = new Blob([csv], { type: 'text/csv' });
             const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob); a.download = 'Ullswater_Ledger.csv'; a.click();
         }
