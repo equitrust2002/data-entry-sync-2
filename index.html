@@ -2027,7 +2027,85 @@
         }
 
         function closeTicketModal() { document.getElementById('ticket-modal').classList.add('hidden'); }
-        function printCurrentTicket() { window.print(); }
+        // ===== Mobile-safe printing (Android Chrome / iPhone Safari) =====
+        // Builds a clean standalone ticket page and prints THAT, instead of
+        // window.print() on the app (the old visibility trick prints blank on phones).
+        function escHtml(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+        function buildTicketPrintHtml(layout) {
+            const get = id => (document.getElementById(id) || {}).innerText || '';
+            const is58 = layout === '58mm';
+            const rows = Array.from(document.querySelectorAll('#ticket-payload-table tr')).map(tr => {
+                const td = tr.querySelectorAll('td');
+                return `<tr><td class="k">${escHtml(td[0] ? td[0].innerText : '')}</td><td class="v">${escHtml(td[1] ? td[1].innerText : '')}</td></tr>`;
+            }).join('');
+            let qrImg = '';
+            if (currentQrCanvas) {
+                const cont = document.getElementById('ticket-qrcode-container');
+                const mm = (cont && cont.style.getPropertyValue(is58 ? '--qr-mm-58' : '--qr-mm-a4')) || (is58 ? '44mm' : '46mm');
+                qrImg = `<img class="qr" alt="QR" style="width:${mm};height:${mm}" src="${currentQrCanvas.toDataURL('image/png')}">`;
+            }
+            const bc = document.getElementById('ticket-barcode-svg');
+            const barcode = bc ? bc.outerHTML : '';
+            const css = `
+                @page { size: ${is58 ? '58mm auto' : 'A4'}; margin: ${is58 ? '2mm' : '12mm'}; }
+                * { box-sizing: border-box; }
+                html, body { margin:0; padding:0; background:#fff; color:#000; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+                body { font-family: Arial, Helvetica, sans-serif; font-size:${is58 ? '10px' : '13px'}; ${is58 ? 'width:54mm;' : 'max-width:180mm;'} margin:0 auto; padding:${is58 ? '2mm' : '4mm'}; }
+                h1 { font-size:${is58 ? '13px' : '20px'}; margin:0; text-transform:uppercase; }
+                .sub { font-size:${is58 ? '8px' : '11px'}; color:#333; margin:2px 0 6px; }
+                .head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #000; padding-bottom:6px; gap:6px; ${is58 ? 'flex-direction:column;' : ''} }
+                .meta { display:flex; gap:16px; margin:8px 0; font-size:${is58 ? '9px' : '12px'}; }
+                .meta b { display:block; font-size:8px; color:#555; text-transform:uppercase; }
+                table { width:100%; border-collapse:collapse; margin-top:6px; }
+                th { text-align:left; background:#eee; border:1px solid #999; padding:4px; font-size:${is58 ? '8px' : '11px'}; text-transform:uppercase; }
+                td { border:1px solid #bbb; padding:4px; word-break:break-word; font-family:monospace; }
+                td.k { font-weight:bold; width:42%; }
+                .codes { text-align:center; margin-top:10px; border-top:1px dashed #666; padding-top:8px; }
+                .qr { display:block; margin:0 auto; image-rendering:pixelated; image-rendering:crisp-edges; background:#fff; }
+                .scan { font-weight:bold; font-size:${is58 ? '9px' : '11px'}; text-transform:uppercase; letter-spacing:1px; margin:4px 0; }
+                svg { max-width:100%; height:auto; margin-top:6px; }
+                .bar { position:sticky; top:0; background:#0f172a; color:#fff; padding:10px; text-align:center; }
+                .bar button { font-size:16px; padding:10px 22px; border:0; border-radius:8px; background:#10b981; color:#fff; font-weight:bold; margin:0 4px; }
+                .bar button.alt { background:#475569; }
+                @media print { .bar { display:none !important; } }`;
+            return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>${escHtml(get('ticket-id-display'))}</title><style>${css}</style></head><body>
+                <div class="bar"><button onclick="window.print()">🖨 Print</button><button class="alt" onclick="window.close()">Close</button></div>
+                <div class="head"><div><h1>Ullswater Corporation</h1><div class="sub">Heavy Equipment &amp; Mining Extraction</div></div>
+                <div style="text-align:${is58 ? 'left' : 'right'}"><b style="font-family:monospace">${escHtml(get('ticket-id-display'))}</b><div class="sub">${escHtml(get('ticket-timestamp-display'))}</div></div></div>
+                <div class="meta"><div><b>Operator</b>${escHtml(get('ticket-operator-display'))}</div><div><b>Form</b>${escHtml(get('ticket-formname-display'))}</div></div>
+                <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>
+                <div class="codes">${qrImg}<div class="scan">Scan to Auto-Fill Entry</div>${barcode}<div style="font-family:monospace;font-size:9px">${escHtml(get('ticket-barcode-text'))}</div></div>
+                <script>window.addEventListener('load', function(){ setTimeout(function(){ try{ window.focus(); window.print(); }catch(e){} }, 500); });<\/script>
+                </body></html>`;
+        }
+
+        function printCurrentTicket() {
+            const html = buildTicketPrintHtml(currentPrintLayout);
+            // 1) New tab/window (works on Android Chrome + iPhone Safari; user tap = allowed popup)
+            let w = null;
+            try { w = window.open('', '_blank'); } catch (e) { w = null; }
+            if (w && w.document) {
+                w.document.open(); w.document.write(html); w.document.close();
+                return;
+            }
+            // 2) Hidden iframe fallback if popups are blocked
+            try {
+                const old = document.getElementById('print-frame'); if (old) old.remove();
+                const f = document.createElement('iframe');
+                f.id = 'print-frame';
+                f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;';
+                document.body.appendChild(f);
+                const d = f.contentWindow.document;
+                d.open(); d.write(html.replace(/<script>[\s\S]*?<\/script>/, '')); d.close();
+                setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { window.print(); } }, 600);
+                return;
+            } catch (e) {}
+            // 3) Last resort
+            window.print();
+            showToast('If nothing printed, allow pop-ups for this page and tap Print again', 'error');
+        }
 
         function openEditModal(ticketId) {
             currentEditingTicketId = ticketId;
