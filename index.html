@@ -1651,24 +1651,89 @@
             }).join('');
         }
 
+        // ===== Rear (environment) camera starter for phones =====
+        // One stream per scanner: prefers the back camera, falls back gracefully,
+        // and never silently opens the selfie camera unless nothing else exists.
+        function stopVideoElementStream(videoId) {
+            const v = document.getElementById(videoId);
+            if (v && v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
+        }
+
+        async function startRearCameraScan(reader, videoId, statusId, onResult) {
+            const statusEl = statusId ? document.getElementById(statusId) : null;
+            const setStatus = (t) => { if (statusEl) statusEl.innerText = t; };
+            const videoEl = document.getElementById(videoId);
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                setStatus('Camera needs HTTPS (or localhost). Open this page via a secure https:// link.');
+                showToast('Camera blocked: open the app over HTTPS', 'error');
+                return false;
+            }
+            videoEl.setAttribute('playsinline', 'true');
+            videoEl.setAttribute('muted', 'true');
+            videoEl.muted = true;
+            const hd = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+            const attempts = [
+                { video: { facingMode: { exact: 'environment' }, ...hd }, audio: false },
+                { video: { facingMode: { ideal: 'environment' }, ...hd }, audio: false }
+            ];
+            setStatus('Starting rear camera…');
+            const cb = (res) => { if (res) onResult(res); };
+            for (const constraints of attempts) {
+                try {
+                    await reader.decodeFromConstraints(constraints, videoEl, cb);
+                    await tuneRearCamera(videoEl);
+                    setStatus('Rear camera ready — hold steady over the code');
+                    return true;
+                } catch (e) {
+                    if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+                        setStatus('Camera permission denied. Allow camera access in browser settings.');
+                        showToast('Camera permission denied', 'error');
+                        return false;
+                    }
+                    try { reader.reset(); } catch (_) {}
+                }
+            }
+            // Fallback: enumerate devices and choose a back-facing one by label
+            try {
+                const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
+                tmp.getTracks().forEach(t => t.stop());
+                const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+                const rear = devs.find(d => /back|rear|environment|world|trasera|arrière/i.test(d.label)) || devs[devs.length - 1];
+                if (rear) {
+                    await reader.decodeFromConstraints({ video: { deviceId: { exact: rear.deviceId } }, audio: false }, videoEl, cb);
+                    await tuneRearCamera(videoEl);
+                    setStatus('Camera ready — hold steady over the code');
+                    return true;
+                }
+            } catch (e) {}
+            setStatus('Unable to start camera. Check permissions.');
+            showToast('Unable to start rear camera', 'error');
+            return false;
+        }
+
+        async function tuneRearCamera(videoEl) {
+            try {
+                const track = videoEl.srcObject && videoEl.srcObject.getVideoTracks()[0];
+                if (!track || !track.getCapabilities) return;
+                const caps = track.getCapabilities();
+                const adv = {};
+                if (caps.focusMode && caps.focusMode.includes('continuous')) adv.focusMode = 'continuous';
+                if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] });
+            } catch (e) {}
+        }
+
         // Camera, Barcode & OCR
         async function openScannerModal(fieldId) {
             activeTargetFieldId = fieldId;
             document.getElementById('scanner-modal').classList.remove('hidden');
-            const videoEl = document.getElementById('camera-video-stream');
-            try {
-                zxingCodeReader = new ZXing.BrowserMultiFormatReader(makeQrHints());
-                zxingCodeReader.decodeFromVideoDevice(undefined, 'zxing-video-element', (res) => {
-                    if (res) applyScannedValue(res.getText());
-                });
-                activeCameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                videoEl.srcObject = activeCameraStream;
-            } catch(e) {}
+            zxingCodeReader = new ZXing.BrowserMultiFormatReader(makeQrHints());
+            await startRearCameraScan(zxingCodeReader, 'camera-video-stream', 'scanner-status-text', (res) => applyScannedValue(res.getText()));
         }
         function openScannerModalDirect() { if (forms[0] && forms[0].fields[0]) openScannerModal(forms[0].fields[0].id); }
         function closeScannerModal() {
-            if (zxingCodeReader) zxingCodeReader.reset();
-            if (activeCameraStream) activeCameraStream.getTracks().forEach(t => t.stop());
+            try { if (zxingCodeReader) zxingCodeReader.reset(); } catch (e) {}
+            stopVideoElementStream('camera-video-stream');
+            activeCameraStream = null;
             document.getElementById('scanner-modal').classList.add('hidden');
         }
         function applyScannedValue(val) {
@@ -1691,23 +1756,17 @@
 
         async function openConnectionScannerModal() {
             document.getElementById('connection-scanner-modal').classList.remove('hidden');
-            const videoEl = document.getElementById('connection-video-stream');
-            try {
-                connectionZxingReader = new ZXing.BrowserMultiFormatReader(makeQrHints());
-                connectionZxingReader.decodeFromVideoDevice(undefined, 'connection-zxing-element', res => {
-                    if(res) {
-                        document.getElementById('setting-webapp-id').value = res.getText();
-                        saveConnectionSettings();
-                        closeConnectionScannerModal();
-                    }
-                });
-                connectionCameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                videoEl.srcObject = connectionCameraStream;
-            } catch(e) {}
+            connectionZxingReader = new ZXing.BrowserMultiFormatReader(makeQrHints());
+            await startRearCameraScan(connectionZxingReader, 'connection-video-stream', 'connection-scanner-status', (res) => {
+                document.getElementById('setting-webapp-id').value = res.getText();
+                saveConnectionSettings();
+                closeConnectionScannerModal();
+            });
         }
         function closeConnectionScannerModal() {
-            if (connectionZxingReader) connectionZxingReader.reset();
-            if (connectionCameraStream) connectionCameraStream.getTracks().forEach(t => t.stop());
+            try { if (connectionZxingReader) connectionZxingReader.reset(); } catch (e) {}
+            stopVideoElementStream('connection-video-stream');
+            connectionCameraStream = null;
             document.getElementById('connection-scanner-modal').classList.add('hidden');
         }
 
@@ -1996,23 +2055,17 @@
         // QR Auto-Extractor & Sheet Auto-Sync
         async function openQrAutoEntryScannerModal() {
             document.getElementById('qr-autoentry-modal').classList.remove('hidden');
-            const videoEl = document.getElementById('qr-autoentry-video');
-            try {
-                qrAutoEntryScanner = new ZXing.BrowserMultiFormatReader(makeQrHints());
-                qrAutoEntryScanner.decodeFromVideoDevice(undefined, 'qr-autoentry-zxing-element', (res) => {
-                    if (res) {
-                        processExtractedQrCsvData(res.getText());
-                        closeQrAutoEntryModal();
-                    }
-                });
-                qrAutoEntryStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                videoEl.srcObject = qrAutoEntryStream;
-            } catch(e) {}
+            qrAutoEntryScanner = new ZXing.BrowserMultiFormatReader(makeQrHints());
+            await startRearCameraScan(qrAutoEntryScanner, 'qr-autoentry-video', 'qr-autoentry-status', (res) => {
+                processExtractedQrCsvData(res.getText());
+                closeQrAutoEntryModal();
+            });
         }
 
         function closeQrAutoEntryModal() {
-            if (qrAutoEntryScanner) qrAutoEntryScanner.reset();
-            if (qrAutoEntryStream) qrAutoEntryStream.getTracks().forEach(t => t.stop());
+            try { if (qrAutoEntryScanner) qrAutoEntryScanner.reset(); } catch (e) {}
+            stopVideoElementStream('qr-autoentry-video');
+            qrAutoEntryStream = null;
             document.getElementById('qr-autoentry-modal').classList.add('hidden');
         }
 
