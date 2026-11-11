@@ -259,6 +259,10 @@
                         <span id="sidebar-queue" class="font-mono text-emerald-400 font-bold">0 Pending</span>
                     </div>
                     <div class="flex justify-between items-center text-[10px]">
+                        <span class="text-slate-500 uppercase font-mono">Sheet:</span>
+                        <span id="sheet-sync-status" class="font-mono font-bold text-[10px] text-slate-500">Waiting…</span>
+                    </div>
+                    <div class="flex justify-between items-center text-[10px]">
                         <span class="text-slate-500 uppercase font-mono">Theme:</span>
                         <span id="sidebar-theme-label" class="font-mono text-cyan-400 font-bold">Standard</span>
                     </div>
@@ -373,6 +377,9 @@
                         <div class="flex items-center gap-2 flex-wrap">
                             <button onclick="exportLogsCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5">
                                 <i class="fa-solid fa-file-csv text-emerald-400"></i> Export CSV
+                            </button>
+                            <button onclick="pullFromSheet(false)" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5">
+                                <i class="fa-solid fa-cloud-arrow-down"></i> Pull from Sheet
                             </button>
                             <button onclick="syncToCloudEndpoint()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md">
                                 <i class="fa-solid fa-cloud-arrow-up"></i> Sync Sheets
@@ -946,11 +953,11 @@
                         <div id="conn-panel-script-help" class="space-y-4 pt-2">
                             <div class="bg-slate-950 border border-amber-500/30 rounded-xl p-4 space-y-2">
                                 <div class="flex items-center justify-between gap-2">
-                                    <div class="text-xs font-bold text-amber-300"><i class="fa-solid fa-code mr-1"></i> Google Apps Script (adds the "Scanned Ticket" column to your sheet)</div>
+                                    <div class="text-xs font-bold text-amber-300"><i class="fa-solid fa-code mr-1"></i> Google Apps Script (two-way: pushes entries to the sheet AND lets the app pull sheet edits back)</div>
                                     <button type="button" onclick="copyAppsScript()" class="bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">Copy Script</button>
                                 </div>
-                                <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this, replace everything → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the /exec URL above. Re-deploy after any change.</p>
-                                <textarea id="apps-script-code" readonly rows="8" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet receiver
+                                <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this, replace everything → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the /exec URL above. <b>Re-deploy as a NEW VERSION after pasting this update</b> (Deploy → Manage deployments → Edit → New version) so the pull feature goes live.</p>
+                                <textarea id="apps-script-code" readonly rows="12" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet receiver
 // Creates the tab + columns automatically, incl. "Scanned Ticket".
 // Re-sending the same Ticket ID updates its row (no duplicates).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
@@ -1000,6 +1007,61 @@ function doPost(e) {
     else sh.appendRow(values);
 
     return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+  } finally { lock.releaseLock(); }
+}
+
+// ===== PULL: lets the app mirror everything in the sheet (manual edits, new rows, corrections, deletions) =====
+// Each tab that has a "Ticket ID" column is treated as a ledger tab. A manually typed row with no Ticket ID
+// gets one assigned automatically (and written back to the sheet) so the app can track it.
+function fmt_(v, h) {
+  if (v instanceof Date) {
+    const tz = Session.getScriptTimeZone();
+    const hasTime = (v.getHours() + v.getMinutes() + v.getSeconds()) &gt; 0;
+    return Utilities.formatDate(v, tz, (h === 'Timestamp' || hasTime) ? 'yyyy-MM-dd HH:mm:ss' : 'yyyy-MM-dd');
+  }
+  return (v === null || v === undefined) ? '' : String(v).trim();
+}
+
+function doGet(e) {
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const out = { ok: true, tabs: {}, rows: [], fetchedAt: new Date().toISOString() };
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const SKIP = { 'Ticket ID': 1, 'Timestamp': 1, 'Operator': 1, 'Form Name': 1, 'Status': 1, 'Scanned Ticket': 1 };
+    ss.getSheets().forEach(function (sh) {
+      const tab = sh.getName();
+      if (sh.getLastColumn() &lt; 1 || sh.getLastRow() &lt; 1) return;
+      const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+      const headers = vals[0].map(String);
+      const iId = headers.indexOf('Ticket ID');
+      if (iId &lt; 0) return;                       // not a ledger tab
+      const iTs = headers.indexOf('Timestamp'), iOp = headers.indexOf('Operator');
+      const iSt = headers.indexOf('Status'), iSc = headers.indexOf('Scanned Ticket');
+      const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+      let count = 0;
+      for (let r = 1; r &lt; vals.length; r++) {
+        const row = vals[r];
+        let hasData = false;
+        for (let c = 0; c &lt; row.length; c++) { if (c !== iId &amp;&amp; String(row[c]).trim() !== '') { hasData = true; break; } }
+        if (!hasData) continue;                  // skip blank rows
+        let id = String(row[iId]).trim();
+        if (!id) { id = 'SHT-' + Utilities.getUuid().substring(0, 8).toUpperCase(); sh.getRange(r + 1, iId + 1).setValue(id); }
+        let ts = iTs &gt;= 0 ? fmt_(row[iTs], 'Timestamp') : '';
+        if (!ts) { ts = nowStr; if (iTs &gt;= 0) sh.getRange(r + 1, iTs + 1).setValue(ts); }
+        const data = {};
+        headers.forEach(function (h, c) { if (h &amp;&amp; !SKIP[h]) data[h] = fmt_(row[c], h); });
+        const scan = iSc &gt;= 0 ? fmt_(row[iSc], '') : '';
+        if (scan) data['Scanned Ticket'] = scan;
+        out.rows.push({
+          id: id, timestamp: ts, user: (iOp &gt;= 0 ? fmt_(row[iOp], '') : '') || 'sheet', formName: tab,
+          status: (iSt &gt;= 0 &amp;&amp; fmt_(row[iSt], '').toUpperCase() === 'VOID') ? 'VOID' : 'VALID',
+          sourceTicket: scan, data: data
+        });
+        count++;
+      }
+      out.tabs[tab] = count;
+    });
+    return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
   } finally { lock.releaseLock(); }
 }
 </textarea>
@@ -1444,6 +1506,7 @@ function doPost(e) {
             loadGeofenceUI();
 
             if (autoGpsEnabled) startAutoGpsTracker();
+            startSheetAutoPull();
         };
 
         function getLocalTimestamp() {
@@ -1987,34 +2050,222 @@ function doPost(e) {
 
         function onActiveFormChange(formId) { activeFormId = formId; renderActiveFormFields(); }
 
+        // ---- Field access / remember-last-value helpers ----
+        function fieldAllowedForUser(field) {
+            if (activeUserRole === 'Administrator') return true;
+            const r = field.allowedRoles || [], u = field.allowedUsers || [];
+            if (!r.length && !u.length) return true;
+            return r.includes(activeUserRole) || u.includes(activeUser);
+        }
+        function getRememberedValues(formId) {
+            try { return (JSON.parse(localStorage.getItem('ullswater_last_values')) || {})[formId] || {}; } catch (e) { return {}; }
+        }
+        function rememberFieldValues(form) {
+            try {
+                const all = JSON.parse(localStorage.getItem('ullswater_last_values')) || {};
+                const mine = all[form.id] || {};
+                form.fields.forEach(field => {
+                    if (!field.remember || ['static', 'computation'].includes(field.type)) return;
+                    const el = document.getElementById(`field_${field.id}`);
+                    if (el) mine[field.id] = el.value;
+                });
+                all[form.id] = mine;
+                localStorage.setItem('ullswater_last_values', JSON.stringify(all));
+            } catch (e) { /* storage full - ignore */ }
+        }
+        function validateRequiredFields(form) {
+            for (const field of form.fields) {
+                if (!field.required || field.hidden || ['static', 'computation'].includes(field.type)) continue;
+                if (!fieldAllowedForUser(field)) continue;
+                const el = document.getElementById(`field_${field.id}`);
+                if (!el) continue;
+                const v = String(el.value || '').trim();
+                if (!v || (field.type === 'checkbox' && v !== 'Yes')) {
+                    showToast(`"${field.label}" is required`, 'error');
+                    const w = document.getElementById(`fieldwrap_${field.id}`);
+                    if (w) { w.scrollIntoView({ behavior: 'smooth', block: 'center' }); w.classList.add('border-rose-500'); setTimeout(() => w.classList.remove('border-rose-500'), 2500); }
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function buildFieldInputHTML(field) {
+            const id = field.id;
+            const IN = 'w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5';
+            const BTN = 'bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2.5 rounded-xl shrink-0';
+            const GHOST = 'bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-3.5 py-2.5 rounded-xl shrink-0';
+            switch (field.type) {
+                case 'dropdown': {
+                    const opts = (field.options || []).map(o => `<option value="${escH(o)}">${escH(o)}</option>`).join('');
+                    return `<select id="field_${id}" onchange="triggerFieldCalculations()" class="${IN}"><option value="">Select option...</option>${opts}</select>`;
+                }
+                case 'list': {
+                    const items = (field.options || []).map(o => `<label class="flex items-center gap-2 text-sm text-slate-200"><input type="checkbox" value="${escH(o)}" onchange="syncListField('${id}')" class="w-4 h-4 accent-blue-600"> ${escH(o)}</label>`).join('');
+                    return `<div id="list_${id}" class="bg-slate-950 border border-slate-700 rounded-xl p-3 space-y-2 max-h-44 overflow-y-auto">${items || '<span class="text-xs text-slate-500">No list items configured.</span>'}</div><input type="hidden" id="field_${id}" value="">`;
+                }
+                case 'date':
+                    return `<input type="date" id="field_${id}" value="${new Date().toISOString().split('T')[0]}" class="${IN}">`;
+                case 'time':
+                    return `<input type="time" id="field_${id}" class="${IN}">`;
+                case 'datetime':
+                    return `<input type="datetime-local" id="field_${id}" class="${IN}">`;
+                case 'numbers':
+                    return `<input type="number" id="field_${id}" oninput="triggerFieldCalculations()" placeholder="0.00" class="${IN}">`;
+                case 'computation':
+                    return `<input type="text" id="field_${id}" readonly placeholder="Auto-calculated..." class="w-full bg-slate-950 border border-blue-500/50 text-emerald-400 font-bold text-sm rounded-xl px-3.5 py-2.5">`;
+                case 'checkbox':
+                    return `<label class="flex items-center gap-3 text-sm text-slate-200 cursor-pointer"><input type="checkbox" id="chk_${id}" onchange="syncCheckField('${id}')" class="w-5 h-5 accent-blue-600"> <span>Tick for Yes</span></label><input type="hidden" id="field_${id}" value="No">`;
+                case 'barcode':
+                    return `<div class="flex gap-2"><input type="text" id="field_${id}" oninput="triggerFieldCalculations()" placeholder="Scan or type barcode / QR..." class="${IN}"><button type="button" onclick="openScannerModal('${id}')" class="${BTN}"><i class="fa-solid fa-barcode"></i> Scan</button></div>`;
+                case 'ocr':
+                    return `<div class="flex gap-2"><input type="text" id="field_${id}" oninput="triggerFieldCalculations()" placeholder="Type or read text with camera..." class="${IN}"><button type="button" onclick="openScannerModal('${id}')" class="${BTN}"><i class="fa-solid fa-camera"></i> OCR</button></div>`;
+                case 'nfc':
+                    return `<div class="flex gap-2"><input type="text" id="field_${id}" placeholder="Tap tag or type tag ID..." class="${IN}"><button type="button" onclick="readFieldNfc('${id}')" class="${BTN}"><i class="fa-solid fa-tag"></i> Tap Tag</button></div>`;
+                case 'image':
+                    return `<input type="hidden" id="field_${id}" value=""><div class="flex gap-2"><label class="${BTN} cursor-pointer"><i class="fa-solid fa-camera"></i> Take / Choose Photo<input type="file" accept="image/*" capture="environment" class="hidden" onchange="handleFieldImage(this,'${id}')"></label><button type="button" onclick="setFieldImage('${id}','')" class="${GHOST}">Clear</button></div><img id="imgprev_${id}" class="hidden max-h-40 rounded-xl border border-slate-700" alt="">`;
+                case 'signature':
+                    return `<input type="hidden" id="field_${id}" value=""><canvas id="sig_${id}" class="w-full rounded-xl border border-slate-700 bg-white" style="height:140px;touch-action:none"></canvas><button type="button" onclick="clearSignature('${id}')" class="${GHOST}">Clear Signature</button>`;
+                case 'location':
+                    return `<div class="flex gap-2"><input type="text" id="field_${id}" readonly placeholder="Tap to capture GPS location..." class="${IN}"><button type="button" onclick="captureFieldLocation('${id}')" class="${BTN}"><i class="fa-solid fa-location-crosshairs"></i> Get</button></div>`;
+                case 'static':
+                    return `<p class="text-sm text-slate-300 whitespace-pre-line">${escH(field.text || '')}</p>`;
+                case 'stopwatch':
+                    return `<input type="hidden" id="field_${id}" value=""><div class="flex items-center gap-2"><span id="swdisp_${id}" class="font-mono text-xl text-white flex-1">00:00:00</span><button type="button" id="swbtn_${id}" onclick="swToggle('${id}')" class="${BTN}">Start</button><button type="button" onclick="swReset('${id}')" class="${GHOST}">Reset</button></div>`;
+                default:
+                    return `<input type="text" id="field_${id}" oninput="triggerFieldCalculations()" placeholder="Enter value..." class="${IN}">`;
+            }
+        }
+
+        function mountFieldInput(field, saved) {
+            const id = field.id;
+            const el = document.getElementById(`field_${id}`);
+            const has = !!field.remember && saved !== undefined && saved !== null && saved !== '';
+            switch (field.type) {
+                case 'static': case 'computation': return;
+                case 'checkbox': { const c = document.getElementById(`chk_${id}`); if (has) c.checked = saved === 'Yes'; syncCheckField(id); return; }
+                case 'list': {
+                    if (has) { const set = String(saved).split(', '); document.querySelectorAll(`#list_${id} input`).forEach(i => { i.checked = set.includes(i.value); }); }
+                    syncListField(id); return;
+                }
+                case 'image': if (has) setFieldImage(id, saved); return;
+                case 'signature': {
+                    initSignature(id);
+                    if (has) { const img = new Image(); img.onload = () => { const cv = document.getElementById(`sig_${id}`); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); el.value = saved; }; img.src = saved; }
+                    return;
+                }
+                case 'stopwatch': swInit(id, has ? saved : ''); return;
+                case 'time': el.value = has ? saved : getCurrentTimeString(); return;
+                case 'datetime': el.value = has ? saved : getLocalTimestamp().replace(' ', 'T').slice(0, 16); return;
+                default: if (has) el.value = saved;
+            }
+        }
+
         function renderActiveFormFields() {
             const container = document.getElementById('dynamic-entry-form');
+            Object.values(window.__sw || {}).forEach(s => clearInterval(s.timer));
+            window.__sw = {};
             container.innerHTML = '';
             const form = forms.find(f => f.id === activeFormId);
             if(!form) return;
+            const remembered = getRememberedValues(form.id);
 
             form.fields.forEach(field => {
-                if(field.hidden) return;
+                if(!fieldAllowedForUser(field)) return;
                 const div = document.createElement('div');
-                div.className = 'bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2 shadow-sm';
-                let inputHTML = '';
-                if(field.type === 'dropdown') {
-                    const opts = (field.options || []).map(o => `<option value="${o}">${o}</option>`).join('');
-                    inputHTML = `<select id="field_${field.id}" onchange="triggerFieldCalculations()" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5"><option value="">Select option...</option>${opts}</select>`;
-                } else if(field.type === 'date') {
-                    inputHTML = `<input type="date" id="field_${field.id}" value="${new Date().toISOString().split('T')[0]}" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
-                } else if(field.type === 'numbers') {
-                    inputHTML = `<input type="number" id="field_${field.id}" oninput="triggerFieldCalculations()" placeholder="0.00" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
-                } else if(field.type === 'computation') {
-                    inputHTML = `<input type="text" id="field_${field.id}" readonly placeholder="Auto-calculated..." class="w-full bg-slate-950 border border-blue-500/50 text-emerald-400 font-bold text-sm rounded-xl px-3.5 py-2.5">`;
-                } else {
-                    inputHTML = `<input type="text" id="field_${field.id}" oninput="triggerFieldCalculations()" placeholder="Enter value..." class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
-                }
-                div.innerHTML = `<label class="block text-xs font-semibold text-slate-300 uppercase">${field.label}</label>` + inputHTML;
+                div.id = `fieldwrap_${field.id}`;
+                div.className = 'bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2 shadow-sm' + (field.hidden ? ' hidden' : '');
+                const star = (field.required && !['static', 'computation'].includes(field.type)) ? ' <span class="text-rose-400">*</span>' : '';
+                div.innerHTML = `<label class="block text-xs font-semibold text-slate-300 uppercase">${escH(field.label)}${star}</label>` + buildFieldInputHTML(field);
                 container.appendChild(div);
+                mountFieldInput(field, remembered[field.id]);
             });
             triggerFieldCalculations();
         }
+
+        // ---- Per-type field helpers ----
+        function syncCheckField(id) { const c = document.getElementById(`chk_${id}`), h = document.getElementById(`field_${id}`); if (c && h) h.value = c.checked ? 'Yes' : 'No'; }
+        function syncListField(id) {
+            const h = document.getElementById(`field_${id}`);
+            if (h) h.value = [...document.querySelectorAll(`#list_${id} input:checked`)].map(i => i.value).join(', ');
+        }
+        function setFieldImage(id, dataUrl) {
+            const h = document.getElementById(`field_${id}`), p = document.getElementById(`imgprev_${id}`);
+            if (h) h.value = dataUrl || '';
+            if (p) { if (dataUrl) { p.src = dataUrl; p.classList.remove('hidden'); } else { p.removeAttribute('src'); p.classList.add('hidden'); } }
+        }
+        function handleFieldImage(input, id) {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const img = new Image();
+                img.onload = () => {
+                    const max = 480, scale = Math.min(1, max / Math.max(img.width, img.height));
+                    const cv = document.createElement('canvas');
+                    cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+                    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+                    setFieldImage(id, cv.toDataURL('image/jpeg', 0.5));
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+            input.value = '';
+        }
+        function initSignature(id) {
+            const cv = document.getElementById(`sig_${id}`);
+            if (!cv) return;
+            cv.width = cv.offsetWidth || 300; cv.height = 140;
+            const ctx = cv.getContext('2d');
+            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cv.width, cv.height);
+            ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#0f172a';
+            let drawing = false;
+            const pos = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / (r.width || cv.width), (e.clientY - r.top) * cv.height / (r.height || cv.height)]; };
+            cv.onpointerdown = e => { drawing = true; cv.setPointerCapture(e.pointerId); const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 0.1, y + 0.1); ctx.stroke(); };
+            cv.onpointermove = e => { if (!drawing) return; const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); };
+            const end = () => { if (!drawing) return; drawing = false; const h = document.getElementById(`field_${id}`); if (h) h.value = cv.toDataURL('image/png'); };
+            cv.onpointerup = end; cv.onpointercancel = end;
+        }
+        function clearSignature(id) { initSignature(id); const h = document.getElementById(`field_${id}`); if (h) h.value = ''; }
+        function captureFieldLocation(id) {
+            const el = document.getElementById(`field_${id}`);
+            if (!navigator.geolocation) { showToast('Location is not supported on this device', 'error'); return; }
+            el.placeholder = 'Locating...';
+            navigator.geolocation.getCurrentPosition(
+                p => { el.value = `${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`; },
+                () => { el.placeholder = 'Tap to capture GPS location...'; showToast('Unable to get location. Allow location access.', 'error'); },
+                { enableHighAccuracy: true, timeout: 15000 });
+        }
+        async function readFieldNfc(id) {
+            const el = document.getElementById(`field_${id}`);
+            if (!('NDEFReader' in window)) { showToast('NFC not supported here (needs Chrome on Android). Type the tag ID instead.', 'error'); return; }
+            try {
+                const ctrl = new AbortController();
+                const reader = new NDEFReader();
+                await reader.scan({ signal: ctrl.signal });
+                showToast('Hold the tag near the back of the phone...', 'success');
+                reader.onreading = ev => { el.value = ev.serialNumber || ''; ctrl.abort(); triggerFieldCalculations(); };
+            } catch (e) { showToast('NFC read failed or permission denied', 'error'); }
+        }
+        function swFmt(ms) { const s = Math.floor(ms / 1000); return [Math.floor(s / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':'); }
+        function swInit(id, saved) {
+            const st = { ms: 0, running: false, t0: 0, timer: null };
+            if (saved && /^\d+:\d\d:\d\d$/.test(saved)) { const [h, m, s] = saved.split(':').map(Number); st.ms = ((h * 60 + m) * 60 + s) * 1000; }
+            window.__sw[id] = st; swRender(id);
+        }
+        function swRender(id) {
+            const st = (window.__sw || {})[id]; if (!st) return;
+            const ms = st.ms + (st.running ? Date.now() - st.t0 : 0), t = swFmt(ms);
+            const d = document.getElementById(`swdisp_${id}`), h = document.getElementById(`field_${id}`), b = document.getElementById(`swbtn_${id}`);
+            if (d) d.textContent = t; if (h) h.value = ms > 0 ? t : ''; if (b) b.textContent = st.running ? 'Stop' : 'Start';
+        }
+        function swToggle(id) {
+            const st = window.__sw[id]; if (!st) return;
+            if (st.running) { st.ms += Date.now() - st.t0; st.running = false; clearInterval(st.timer); }
+            else { st.t0 = Date.now(); st.running = true; st.timer = setInterval(() => swRender(id), 250); }
+            swRender(id);
+        }
+        function swReset(id) { const st = window.__sw[id]; if (!st) return; clearInterval(st.timer); st.ms = 0; st.running = false; swRender(id); }
 
         function triggerFieldCalculations() {
             const form = forms.find(f => f.id === activeFormId);
@@ -2032,7 +2283,7 @@ function doPost(e) {
                             evalString = evalString.replace(new RegExp(`\\b${varName}\\b`, 'g'), val);
                         });
                         const computed = Function(`"use strict"; return (${evalString});`)();
-                        outputEl.value = isNaN(computed) ? '0.00' : Number(computed).toFixed(2);
+                        outputEl.value = (isNaN(computed) || !isFinite(computed)) ? '0.00' : Number(computed).toFixed(2);
                     } catch(e) { outputEl.value = '0.00'; }
                 }
             });
@@ -2058,12 +2309,15 @@ function doPost(e) {
             if(e) e.preventDefault();
             const form = forms.find(f => f.id === activeFormId);
             if(!form) return;
+            if(!validateRequiredFields(form)) return;
 
             let recordData = {};
             form.fields.forEach(field => {
                 const el = document.getElementById(`field_${field.id}`);
                 if(el) recordData[field.label] = el.value;
             });
+
+            rememberFieldValues(form);
 
             // Reference of the printed ticket that was scanned -> stored inside the data entry itself
             if (pendingScanRef) recordData[SCAN_REF_LABEL] = pendingScanRef;
@@ -2103,11 +2357,122 @@ function doPost(e) {
             }
         }
 
+
+        // ===== Two-way sync: Google Sheet -> App ledger =====
+        let sheetSyncTimer = null, sheetSyncBusy = false;
+        const recentlyDeleted = {};
+        const SHEET_POLL_MS = 20000;
+
+        function sheetEq(a, b) {
+            a = String(a == null ? '' : a).trim(); b = String(b == null ? '' : b).trim();
+            if (a === b) return true;
+            const na = parseFloat(a.replace(/,/g, '')), nb = parseFloat(b.replace(/,/g, ''));
+            return !isNaN(na) && !isNaN(nb) && /^-?[\d,.]+$/.test(a) && /^-?[\d,.]+$/.test(b) && na === nb;
+        }
+        function sheetDataEq(x, y) {
+            x = x || {}; y = y || {};
+            const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+            for (const k of keys) if (!sheetEq(x[k], y[k])) return false;
+            return true;
+        }
+        function setSheetSyncBadge(state, text) {
+            const el = document.getElementById('sheet-sync-status'); if (!el) return;
+            const col = { ok: 'text-emerald-400', syncing: 'text-amber-300', error: 'text-rose-400', off: 'text-slate-500' }[state] || 'text-slate-400';
+            el.className = 'font-mono font-bold text-[10px] ' + col;
+            el.innerText = text;
+        }
+
+        function mergeSheetRows(rows, tabs) {
+            const st = { added: 0, updated: 0, removed: 0 };
+            const remoteIds = new Set(rows.map(r => r.id));
+            const now = Date.now();
+            Object.keys(recentlyDeleted).forEach(k => { if (now - recentlyDeleted[k] > 60000) delete recentlyDeleted[k]; });
+
+            rows.forEach(r => {
+                if (recentlyDeleted[r.id]) return;
+                const form = forms.find(f => f.name.toLowerCase() === String(r.formName).toLowerCase());
+                const local = logs.find(l => l.id === r.id);
+                if (!local) {
+                    logs.push({ id: r.id, timestamp: r.timestamp, user: r.user, formName: form ? form.name : r.formName, formId: form ? form.id : '',
+                        data: r.data || {}, status: r.status, sourceTicket: r.sourceTicket || '', sheetSynced: true });
+                    st.added++;
+                    return;
+                }
+                local.sheetSynced = true;
+                if (local._dirtyAt && now - local._dirtyAt < 20000) return;   // local edit still being pushed
+                let changed = false;
+                if (!sheetEq(local.timestamp, r.timestamp)) { local.timestamp = r.timestamp; changed = true; }
+                if (!sheetEq(local.user, r.user) && r.user !== 'sheet') { local.user = r.user; changed = true; }
+                if (local.status !== r.status) { local.status = r.status; changed = true; }
+                if (!sheetEq(local.sourceTicket || '', r.sourceTicket || '')) { local.sourceTicket = r.sourceTicket || ''; changed = true; }
+                if (!sheetDataEq(local.data, r.data)) { local.data = r.data || {}; changed = true; }
+                if (changed) st.updated++;
+            });
+
+            // rows deleted directly in the sheet -> remove from ledger (only tickets previously seen on that sheet tab)
+            const before = logs.length;
+            logs = logs.filter(l => {
+                if (!l.sheetSynced || remoteIds.has(l.id)) return true;
+                if (tabs[l.formName] === undefined) return true;               // tab not reported -> don't touch
+                if (l._dirtyAt && now - l._dirtyAt < 20000) return true;
+                return false;
+            });
+            st.removed = before - logs.length;
+
+            // tickets never confirmed on the sheet (e.g. push failed while offline) -> push again
+            logs.forEach(l => {
+                if (!l.sheetSynced && !remoteIds.has(l.id) && now - Date.parse(String(l.timestamp).replace(' ', 'T')) > 60000) postLogToGoogleSheet(l, l.formName);
+            });
+            return st;
+        }
+
+        async function pullFromSheet(silent) {
+            const s = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
+            if (!s.webappId || !String(s.webappId).startsWith('http')) {
+                setSheetSyncBadge('off', 'No endpoint');
+                if (!silent) showToast('Set the Web App URL in the Connection tab first', 'error');
+                return;
+            }
+            if (sheetSyncBusy || !activeUser) return;
+            sheetSyncBusy = true; setSheetSyncBadge('syncing', 'Syncing…');
+            try {
+                const url = s.webappId + (s.webappId.includes('?') ? '&' : '?') + 'action=pull&_=' + Date.now();
+                const res = await fetch(url, { cache: 'no-store' });
+                const j = await res.json();
+                if (!j || !j.ok || !Array.isArray(j.rows)) throw new Error('Endpoint did not return sheet data — re-deploy the updated Apps Script as a new version');
+                const st = mergeSheetRows(j.rows, j.tabs || {});
+                if (st.added || st.updated || st.removed) {
+                    logs.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+                    localStorage.setItem('ullswater_logs', JSON.stringify(logs));
+                    renderLedgerTable();
+                    if (stmtReady) renderStatement();
+                    renderTransmissionsOverview();
+                    showToast(`Sheet sync: ${st.added} new, ${st.updated} updated, ${st.removed} removed`, 'success');
+                } else {
+                    localStorage.setItem('ullswater_logs', JSON.stringify(logs));
+                    if (!silent) showToast('Ledger already matches the Google Sheet', 'success');
+                }
+                const t = new Date();
+                setSheetSyncBadge('ok', 'Synced ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0'));
+            } catch (err) {
+                setSheetSyncBadge('error', 'Pull failed');
+                if (!silent) showToast('Sheet pull failed: ' + (err && err.message ? err.message : err), 'error');
+            } finally { sheetSyncBusy = false; }
+        }
+
+        function startSheetAutoPull() {
+            if (sheetSyncTimer) clearInterval(sheetSyncTimer);
+            sheetSyncTimer = setInterval(() => { if (!document.hidden) pullFromSheet(true); }, SHEET_POLL_MS);
+            pullFromSheet(true);
+        }
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) pullFromSheet(true); });
+
         function syncToCloudEndpoint() {
             const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
             if(!settings.webappId) { showToast('Configure Web App URL in Connection tab first', 'error'); return; }
             logs.forEach(l => postLogToGoogleSheet(l, l.formName));
-            showToast('All ledger records synchronized to cloud sheet', 'success');
+            showToast('Pushed all ledger records — now pulling sheet changes…', 'success');
+            setTimeout(() => pullFromSheet(false), 3000);
         }
 
         function getLedgerFiltered() {
@@ -2165,7 +2530,7 @@ function doPost(e) {
                     <td class="p-3.5 text-slate-400">${log.timestamp}</td>
                     <td class="p-3.5 text-slate-200">@${log.user}</td>
                     <td class="p-3.5 text-blue-300 font-semibold">${log.formName}</td>
-                    <td class="p-3.5 text-slate-300 truncate max-w-xs">${Object.entries(log.data || {}).filter(([k]) => k !== SCAN_REF_LABEL).map(([k, v]) => `${k}: ${v}`).join(' | ')}</td>
+                    <td class="p-3.5 text-slate-300 truncate max-w-xs">${Object.entries(log.data || {}).filter(([k]) => k !== SCAN_REF_LABEL).map(([k, v]) => `${k}: ${String(v).startsWith('data:image') ? '[Image]' : v}`).join(' | ')}</td>
                     <td class="p-3.5">${log.status === 'VOID'
                         ? '<span class="bg-rose-500/10 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold">VOID</span>'
                         : '<span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full text-[10px]">VALID</span>'}</td>
@@ -2284,9 +2649,10 @@ function doPost(e) {
             let csvValues = [`"${log.id}"`, `"${log.timestamp}"`, `"${log.user}"`, `"${log.formName}"`];
 
             Object.entries(log.data || {}).forEach(([k, v]) => {
-                tbody.innerHTML += `<tr><td class="p-2 font-bold text-slate-700">${k}</td><td class="p-2 text-slate-900">${v}</td></tr>`;
+                const isImg = String(v).startsWith('data:image');
+                tbody.innerHTML += `<tr><td class="p-2 font-bold text-slate-700">${k}</td><td class="p-2 text-slate-900">${isImg ? `<img src="${v}" style="max-height:60px">` : v}</td></tr>`;
                 csvHeaders.push(`"${k}"`);
-                csvValues.push(`"${String(v).replace(/"/g, '""')}"`);
+                csvValues.push(`"${(isImg ? '[Image]' : String(v)).replace(/"/g, '""')}"`);
             });
 
             const qrContainer = document.getElementById('ticket-qrcode-container');
@@ -2631,7 +2997,7 @@ function doPost(e) {
                 ? `Void ticket ${ticketId}? It stays in the ledger marked VOID.`
                 : `Restore ticket ${ticketId} to VALID?`;
             if (!confirm(msg)) return;
-            log.status = makeVoid ? 'VOID' : 'VALID';
+            log.status = makeVoid ? 'VOID' : 'VALID'; log._dirtyAt = Date.now();
             log.voidedBy = makeVoid ? (activeUser || 'admin') : '';
             log.voidedAt = makeVoid ? getLocalTimestamp() : '';
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
@@ -2645,7 +3011,7 @@ function doPost(e) {
             const log = logs.find(l => l.id === ticketId);
             if (!log) return;
             if (!confirm(`Permanently delete ticket ${ticketId}? This cannot be undone.\n(Tip: use Void to keep a record.)`)) return;
-            logs = logs.filter(l => l.id !== ticketId);
+            logs = logs.filter(l => l.id !== ticketId); recentlyDeleted[ticketId] = Date.now();
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
             renderLedgerTable();
             postDeleteToGoogleSheet(log);
@@ -2770,7 +3136,7 @@ function doPost(e) {
                 const el = document.getElementById(`edit_field_${k}`);
                 if(el) log.data[k] = el.value;
             });
-            if (log.data && log.data[SCAN_REF_LABEL] !== undefined) log.sourceTicket = log.data[SCAN_REF_LABEL];
+            if (log.data && log.data[SCAN_REF_LABEL] !== undefined) log.sourceTicket = log.data[SCAN_REF_LABEL]; log._dirtyAt = Date.now();
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
             renderLedgerTable();
             postLogToGoogleSheet(log, log.formName);
@@ -2876,34 +3242,179 @@ function doPost(e) {
 
         function selectFormForDesign(formId) { selectedDesignFormId = formId; renderDesignerFormList(); renderFormEditorWorkspace(); }
 
+        const FIELD_TYPES = [
+            ['text', 'Text'], ['ocr', 'Text / OCR'], ['numbers', 'Number'], ['dropdown', 'Dropdown List'], ['list', 'List (Multi-select)'],
+            ['date', 'Date'], ['time', 'Time'], ['datetime', 'Date and Time'], ['checkbox', 'Check Box'],
+            ['barcode', 'Barcode / QR'], ['nfc', 'BFC / NFC Tag'], ['image', 'Image'], ['signature', 'Signature'],
+            ['location', 'Location'], ['static', 'Static Text'], ['stopwatch', 'Stop Watch'], ['computation', 'Computation']
+        ];
+        const ACCESS_ROLES = ['Administrator', 'Data Entry Operator', 'Auditor'];
+        const CALC_OPS = [['*', '× Multiply'], ['-', '− Deduct'], ['+', '+ Add'], ['/', '÷ Divide']];
+        const CALC_SOURCE_TYPES = ['numbers', 'dropdown', 'computation', 'text', 'ocr'];
+
+        function getCalc(form, field) {
+            if (field.calc && field.calc.terms) return field.calc;
+            const toks = (field.formula || '').match(/\(\s*\w+\s*\)|[*\/+\-]/g) || [];
+            const terms = [];
+            if (toks.length && toks.length % 2 === 1 && toks.join('').replace(/\s/g, '') === (field.formula || '').replace(/\s/g, '')) {
+                for (let i = 0; i < toks.length; i += 2) {
+                    if (/^[*\/+\-]$/.test(toks[i]) || (i > 0 && !/^[*\/+\-]$/.test(toks[i - 1]))) { terms.length = 0; break; }
+                    terms.push({ op: i === 0 ? '' : toks[i - 1], field: toks[i].replace(/[()\s]/g, '') });
+                }
+            }
+            return { terms: terms.length >= 2 ? terms : [{ op: '', field: '' }, { op: '*', field: '' }] };
+        }
+        function buildFormulaFromTerms(terms) {
+            const t = terms.filter(x => x.field);
+            if (!t.length) return '';
+            let acc = `(${t[0].field})`;
+            for (let i = 1; i < t.length; i++) acc = `(${acc} ${t[i].op || '*'} (${t[i].field}))`;
+            return t.length === 1 ? t[0].field && `(${t[0].field})` : acc;
+        }
+        function commitFormDesign() { localStorage.setItem('ullswater_forms', JSON.stringify(forms)); renderActiveFormFields(); }
+        function findDesignField(formId, fieldId) {
+            const form = forms.find(f => f.id === formId);
+            return { form, field: form ? form.fields.find(f => f.id === fieldId) : null };
+        }
+        function updateCalc(formId, fieldId, idx, key, val) {
+            const { form, field } = findDesignField(formId, fieldId); if (!field) return;
+            const calc = JSON.parse(JSON.stringify(getCalc(form, field)));
+            if (key === 'add') calc.terms.push({ op: '*', field: '' });
+            else if (key === 'remove') calc.terms.splice(idx, 1);
+            else calc.terms[idx][key] = val;
+            field.calc = calc; field.formula = buildFormulaFromTerms(calc.terms);
+            commitFormDesign(); renderFormEditorWorkspace();
+        }
+        function setFieldFlag(formId, fieldId, prop, checked) {
+            const { field } = findDesignField(formId, fieldId); if (!field) return;
+            field[prop] = !!checked; commitFormDesign(); renderFormEditorWorkspace();
+        }
+        function toggleFieldAccess(formId, fieldId, kind, value, checked) {
+            const { field } = findDesignField(formId, fieldId); if (!field) return;
+            const key = kind === 'role' ? 'allowedRoles' : 'allowedUsers';
+            const set = new Set(field[key] || []);
+            checked ? set.add(value) : set.delete(value);
+            field[key] = [...set];
+            commitFormDesign();
+            const s = document.getElementById(`access_sum_${fieldId}`);
+            if (s) s.textContent = accessSummary(field);
+        }
+        function accessSummary(field) {
+            const n = (field.allowedRoles || []).length + (field.allowedUsers || []).length;
+            return n ? `Restricted (${n} selected)` : 'Everyone';
+        }
+        function moveFieldTo(formId, fieldId, newIndex) {
+            const form = forms.find(f => f.id === formId); if (!form) return;
+            const from = form.fields.findIndex(f => f.id === fieldId); if (from < 0) return;
+            const to = Math.max(0, Math.min(form.fields.length - 1, newIndex));
+            if (to === from) { renderFormEditorWorkspace(); return; }
+            const [item] = form.fields.splice(from, 1);
+            form.fields.splice(to, 0, item);
+            commitFormDesign(); renderFormEditorWorkspace();
+        }
+        function startFieldDrag(ev, formId, fieldId) {
+            ev.preventDefault();
+            const handle = ev.currentTarget;
+            try { handle.setPointerCapture(ev.pointerId); } catch (e) {}
+            const cards = [...document.querySelectorAll('#field-cards [data-fid]')];
+            const card = cards.find(c => c.dataset.fid === fieldId);
+            const hi = ['ring-2', 'ring-blue-500'];
+            let target = null;
+            if (card) card.style.opacity = '0.5';
+            const scroller = document.getElementById('tab-designer');
+            const move = e => {
+                cards.forEach(c => c.classList.remove(...hi));
+                const hit = cards.find(c => { const r = c.getBoundingClientRect(); return e.clientY >= r.top && e.clientY <= r.bottom; });
+                if (hit) { hit.classList.add(...hi); target = cards.indexOf(hit); }
+                if (scroller) { if (e.clientY < 90) scroller.scrollBy(0, -14); else if (e.clientY > window.innerHeight - 90) scroller.scrollBy(0, 14); }
+            };
+            const up = () => {
+                handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up);
+                cards.forEach(c => c.classList.remove(...hi)); if (card) card.style.opacity = '';
+                if (target !== null) moveFieldTo(formId, fieldId, target);
+            };
+            handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up); handle.addEventListener('pointercancel', up);
+        }
+
         function renderFormEditorWorkspace() {
             const container = document.getElementById('form-editor-workspace');
             const form = forms.find(f => f.id === selectedDesignFormId);
             if(!form) return;
+            const SEL = 'bg-slate-900 text-white text-xs rounded-lg px-2 py-1';
+            const lbl = id => { const f = form.fields.find(x => x.id === id); return f ? f.label : '(select column)'; };
+
+            const calcBuilder = field => {
+                const calc = getCalc(form, field);
+                const sources = form.fields.filter(f => f.id !== field.id && CALC_SOURCE_TYPES.includes(f.type));
+                const fieldSel = (i, cur) => `<select onchange="updateCalc('${form.id}','${field.id}',${i},'field',this.value)" class="${SEL} flex-1 min-w-0"><option value="">Select column...</option>${sources.map(s => `<option value="${s.id}" ${s.id === cur ? 'selected' : ''}>${escH(s.label)}</option>`).join('')}</select>`;
+                const rows = calc.terms.map((t, i) => `
+                    <div class="flex items-center gap-2">
+                        ${i === 0 ? '<span class="text-[10px] uppercase text-slate-500 w-20 shrink-0">Start with</span>'
+                            : `<select onchange="updateCalc('${form.id}','${field.id}',${i},'op',this.value)" class="${SEL} w-28 shrink-0">${CALC_OPS.map(o => `<option value="${o[0]}" ${o[0] === t.op ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>`}
+                        ${fieldSel(i, t.field)}
+                        ${i > 1 ? `<button onclick="updateCalc('${form.id}','${field.id}',${i},'remove')" class="text-rose-400 text-xs"><i class="fa-solid fa-xmark"></i></button>` : ''}
+                    </div>`).join('');
+                const sym = { '*': '×', '-': '−', '+': '+', '/': '÷' };
+                const preview = calc.terms.filter(t => t.field).map((t, i) => (i ? ` ${sym[t.op] || '×'} ` : '') + lbl(t.field)).join('');
+                return `
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-2.5 space-y-2">
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-emerald-400"><i class="fa-solid fa-calculator"></i> Computation Builder</div>
+                        ${rows}
+                        <div class="flex items-center justify-between gap-2">
+                            <button onclick="updateCalc('${form.id}','${field.id}',0,'add')" class="text-cyan-400 text-xs font-bold"><i class="fa-solid fa-plus"></i> Add column</button>
+                            <span class="text-[11px] text-emerald-300 font-mono truncate">${preview ? '= ' + escH(preview) : 'Pick columns above'}</span>
+                        </div>
+                        <details><summary class="text-[10px] text-slate-500 cursor-pointer">Advanced: edit formula manually</summary>
+                            <input type="text" value="${escH(field.formula || '')}" placeholder="Formula e.g. (f1)*(f2)" onchange="updateFieldFormula('${form.id}', '${field.id}', this.value)" class="mt-1 w-full bg-slate-900 border border-slate-800 text-emerald-400 font-mono text-xs px-3 py-1 rounded">
+                        </details>
+                    </div>`;
+            };
+
+            const accessPanel = field => `
+                <details class="bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5">
+                    <summary class="text-[11px] text-slate-300 cursor-pointer"><i class="fa-solid fa-user-lock text-blue-400"></i> User Access: <span id="access_sum_${field.id}" class="font-semibold">${accessSummary(field)}</span></summary>
+                    <div class="pt-2 space-y-2">
+                        <p class="text-[10px] text-slate-500">Leave everything unticked so all users can see this field. Administrators always see every field.</p>
+                        <div class="text-[10px] uppercase text-slate-400">Roles</div>
+                        <div class="flex flex-wrap gap-x-4 gap-y-1">${ACCESS_ROLES.map(r => `<label class="flex items-center gap-1.5 text-xs text-slate-200"><input type="checkbox" class="accent-blue-600" ${(field.allowedRoles || []).includes(r) ? 'checked' : ''} onchange="toggleFieldAccess('${form.id}','${field.id}','role','${r}',this.checked)"> ${r}</label>`).join('')}</div>
+                        <div class="text-[10px] uppercase text-slate-400">Specific users</div>
+                        <div class="flex flex-wrap gap-x-4 gap-y-1">${users.map(u => `<label class="flex items-center gap-1.5 text-xs text-slate-200"><input type="checkbox" class="accent-blue-600" ${(field.allowedUsers || []).includes(u.username) ? 'checked' : ''} onchange="toggleFieldAccess('${form.id}','${field.id}','user','${escH(u.username)}',this.checked)"> @${escH(u.username)}</label>`).join('')}</div>
+                    </div>
+                </details>`;
 
             container.innerHTML = `
                 <div class="space-y-4">
                     <div class="flex items-center justify-between pb-3 border-b border-slate-800">
-                        <input type="text" value="${form.name}" onchange="updateFormName('${form.id}', this.value)" class="bg-transparent text-white font-bold text-lg focus:outline-none">
+                        <input type="text" value="${escH(form.name)}" onchange="updateFormName('${form.id}', this.value)" class="bg-transparent text-white font-bold text-lg focus:outline-none">
                         <button onclick="addFieldToForm('${form.id}')" class="bg-blue-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl"><i class="fa-solid fa-plus"></i> Add Field</button>
                     </div>
+                    <p class="text-[10px] text-slate-500"><i class="fa-solid fa-grip-vertical"></i> Drag the handle, use the arrows, or type a new position number to move a field.</p>
+                    <div id="field-cards" class="space-y-4">
                     ${form.fields.map((field, idx) => `
-                        <div class="bg-slate-950 border border-slate-800 rounded-2xl p-3 space-y-2">
+                        <div data-fid="${field.id}" class="bg-slate-950 border border-slate-800 rounded-2xl p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2">
-                                <input type="text" value="${field.label}" onchange="updateFieldProperty('${form.id}', '${field.id}', 'label', this.value)" class="bg-slate-900 text-white text-sm rounded-lg px-3 py-1 flex-1">
-                                <select onchange="updateFieldProperty('${form.id}', '${field.id}', 'type', this.value)" class="bg-slate-900 text-white text-xs rounded-lg px-2 py-1">
-                                    <option value="text" ${field.type==='text'?'selected':''}>Text</option>
-                                    <option value="dropdown" ${field.type==='dropdown'?'selected':''}>Dropdown</option>
-                                    <option value="numbers" ${field.type==='numbers'?'selected':''}>Numbers</option>
-                                    <option value="computation" ${field.type==='computation'?'selected':''}>Computation</option>
-                                    <option value="date" ${field.type==='date'?'selected':''}>Date</option>
+                                <span onpointerdown="startFieldDrag(event, '${form.id}', '${field.id}')" title="Drag to move" class="text-slate-500 hover:text-white cursor-grab px-1" style="touch-action:none"><i class="fa-solid fa-grip-vertical"></i></span>
+                                <input type="number" min="1" max="${form.fields.length}" value="${idx + 1}" title="Position - type a number to move" onchange="moveFieldTo('${form.id}', '${field.id}', (parseInt(this.value) || 1) - 1)" class="bg-slate-900 text-blue-300 text-xs font-bold text-center rounded-lg w-11 py-1">
+                                <input type="text" value="${escH(field.label)}" onchange="updateFieldProperty('${form.id}', '${field.id}', 'label', this.value)" class="bg-slate-900 text-white text-sm rounded-lg px-3 py-1 flex-1 min-w-0">
+                                <select onchange="updateFieldProperty('${form.id}', '${field.id}', 'type', this.value)" class="${SEL}">
+                                    ${FIELD_TYPES.map(t => `<option value="${t[0]}" ${field.type === t[0] ? 'selected' : ''}>${t[1]}</option>`).join('')}
                                 </select>
-                                ${field.type === 'dropdown' ? `<button onclick="openDropdownManager('${form.id}', '${field.id}')" class="text-cyan-400 text-xs font-bold"><i class="fa-solid fa-list"></i> Options</button>` : ''}
+                                ${(field.type === 'dropdown' || field.type === 'list') ? `<button onclick="openDropdownManager('${form.id}', '${field.id}')" class="text-cyan-400 text-xs font-bold"><i class="fa-solid fa-list"></i> Options</button>` : ''}
+                                <button onclick="moveFieldTo('${form.id}', '${field.id}', ${idx - 1})" title="Move up" class="text-slate-400 hover:text-white ${idx === 0 ? 'opacity-30 pointer-events-none' : ''}"><i class="fa-solid fa-arrow-up"></i></button>
+                                <button onclick="moveFieldTo('${form.id}', '${field.id}', ${idx + 1})" title="Move down" class="text-slate-400 hover:text-white ${idx === form.fields.length - 1 ? 'opacity-30 pointer-events-none' : ''}"><i class="fa-solid fa-arrow-down"></i></button>
                                 <button onclick="removeFieldFromForm('${form.id}', '${field.id}')" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button>
                             </div>
-                            ${field.type === 'computation' ? `<input type="text" value="${field.formula || ''}" placeholder="Formula e.g. (f1)*(f2)" onchange="updateFieldFormula('${form.id}', '${field.id}', this.value)" class="w-full bg-slate-900 border border-slate-800 text-emerald-400 font-mono text-xs px-3 py-1 rounded">` : ''}
+                            <div class="flex flex-wrap items-center gap-x-5 gap-y-1 px-1">
+                                <label class="flex items-center gap-1.5 text-xs text-slate-300"><input type="checkbox" class="accent-blue-600" ${field.required ? 'checked' : ''} onchange="setFieldFlag('${form.id}', '${field.id}', 'required', this.checked)"> Required</label>
+                                <label class="flex items-center gap-1.5 text-xs text-slate-300"><input type="checkbox" class="accent-blue-600" ${field.remember ? 'checked' : ''} onchange="setFieldFlag('${form.id}', '${field.id}', 'remember', this.checked)"> Remember last value</label>
+                                <label class="flex items-center gap-1.5 text-xs text-slate-300"><input type="checkbox" class="accent-blue-600" ${field.hidden ? 'checked' : ''} onchange="setFieldFlag('${form.id}', '${field.id}', 'hidden', this.checked)"> Hidden</label>
+                            </div>
+                            ${field.type === 'computation' ? calcBuilder(field) : ''}
+                            ${field.type === 'static' ? `<textarea rows="2" placeholder="Static text shown on the form..." onchange="updateFieldProperty('${form.id}', '${field.id}', 'text', this.value)" class="w-full bg-slate-900 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded">${escH(field.text || '')}</textarea>` : ''}
+                            ${accessPanel(field)}
                         </div>
                     `).join('')}
+                    </div>
                 </div>`;
         }
 
@@ -2978,7 +3489,7 @@ function doPost(e) {
             const webappId = document.getElementById('setting-webapp-id').value;
             const sheetUrl = document.getElementById('setting-sheet-url').value;
             localStorage.setItem('ullswater_connection_settings', JSON.stringify({ webappId, sheetUrl }));
-            showToast('Connection saved', 'success');
+            showToast('Connection saved', 'success'); startSheetAutoPull();
         }
         function loadSettingsToUI() {
             const saved = JSON.parse(localStorage.getItem('ullswater_connection_settings'));
