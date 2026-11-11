@@ -22,7 +22,9 @@
 
         .leaflet-container { background: #090d16 !important; font-family: inherit; }
 
-        /* NIGHT VISION COCKPIT THEME */
+        /* =========================================================================
+           NIGHT VISION COCKPIT THEME (Deep Amber-on-Black / Zero Blue Light 590nm)
+           ========================================================================= */
         body.night-vision, .night-vision {
             background-color: #020100 !important;
             color: #fbbf24 !important;
@@ -74,6 +76,9 @@
             border-color: #f59e0b !important;
             font-weight: 700 !important;
         }
+        .night-vision .bg-blue-600:hover,
+        .night-vision .bg-cyan-600:hover,
+        .night-vision .bg-emerald-600:hover { background-color: #f59e0b !important; }
 
         .night-vision input,
         .night-vision select,
@@ -82,7 +87,22 @@
             border-color: #78350f !important;
             color: #fef3c7 !important;
         }
+        .night-vision input:focus,
+        .night-vision select:focus,
+        .night-vision textarea:focus {
+            border-color: #f59e0b !important;
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3) !important;
+        }
 
+        .night-vision .leaflet-container {
+            background: #020100 !important;
+            filter: sepia(100%) hue-rotate(5deg) saturate(380%) contrast(125%) brightness(82%) !important;
+        }
+        .night-vision video {
+            filter: sepia(65%) hue-rotate(10deg) saturate(220%) contrast(110%) !important;
+        }
+
+        /* PRINT MEDIA CONFIGURATIONS (A4 vs 58mm Thermal) */
         @media print {
             body * { visibility: hidden; }
             #printable-ticket-modal, #printable-ticket-modal * { visibility: visible; }
@@ -107,16 +127,26 @@
             }
         }
 
+        /* ===== HIGH-CONTRAST, SCANNABLE QR ===== */
         #ticket-qrcode-container { background:#ffffff !important; line-height:0; }
         #ticket-qrcode-container canvas {
             image-rendering: pixelated; image-rendering: crisp-edges;
             -webkit-print-color-adjust: exact; print-color-adjust: exact;
             display:block; background:#ffffff;
         }
+        @media print {
+            #ticket-qrcode-container { border:0 !important; padding:0 !important; }
+            #ticket-qrcode-container canvas { width: var(--qr-mm-a4, 46mm) !important; height: var(--qr-mm-a4, 46mm) !important; }
+            body.print-mode-58mm #ticket-qrcode-container canvas { width: var(--qr-mm-58, 44mm) !important; height: var(--qr-mm-58, 44mm) !important; }
+            #ticket-qr-status, #ticket-qr-download { display:none !important; }
+        }
 
-        .drag-handle { cursor: grab; }
-        .drag-handle:active { cursor: grabbing; }
-        .signature-canvas { touch-action: none; background: #020617; border: 1px dashed #334155; border-radius: 0.75rem; }
+        .ticket-style-58mm {
+            max-width: 58mm !important;
+            font-size: 11px !important;
+            padding: 8px !important;
+            margin: 0 auto !important;
+        }
     </style>
 </head>
 <body class="h-full flex flex-col items-center justify-center p-0 md:p-6 select-none">
@@ -183,6 +213,10 @@
                 <button onclick="switchTab('ledger')" id="nav-ledger" class="nav-btn flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs md:text-sm font-medium transition-all text-slate-400 hover:text-white hover:bg-slate-800">
                     <i class="fa-solid fa-book-open w-5 text-center text-base"></i>
                     <span class="hidden md:inline">Ledger & Tickets</span>
+                </button>
+                <button onclick="switchTab('statement')" id="nav-statement" class="nav-btn flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs md:text-sm font-medium transition-all text-slate-400 hover:text-white hover:bg-slate-800">
+                    <i class="fa-solid fa-chart-pie w-5 text-center text-base"></i>
+                    <span class="hidden md:inline">Dashboard & Statement</span>
                 </button>
                 <button onclick="switchTab('gps')" id="nav-gps" class="nav-btn flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs md:text-sm font-medium transition-all text-slate-400 hover:text-white hover:bg-slate-800">
                     <i class="fa-solid fa-satellite-dish w-5 text-center text-base"></i>
@@ -340,16 +374,33 @@
                             <button onclick="exportLogsCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5">
                                 <i class="fa-solid fa-file-csv text-emerald-400"></i> Export CSV
                             </button>
-                            <span id="cloud-sync-status" class="text-[10px] font-mono text-slate-400">Not synced</span>
-                            <button onclick="pullFromCloud(true)" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5">
-                                <i class="fa-solid fa-cloud-arrow-down"></i> Pull Updates
-                            </button>
                             <button onclick="syncToCloudEndpoint()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md">
                                 <i class="fa-solid fa-cloud-arrow-up"></i> Sync Sheets
                             </button>
                             <button onclick="wipeAllData()" class="bg-rose-500 hover:bg-rose-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md">
                                 <i class="fa-solid fa-triangle-exclamation"></i> Clear Logs
                             </button>
+                        </div>
+                    </div>
+
+                    <!-- LEDGER DASHBOARD (summary of ledger & tickets; filters also apply to the table below) -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 space-y-4">
+                        <div class="flex items-end justify-between gap-3 flex-wrap">
+                            <h4 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-chart-pie text-blue-400"></i> Ledger Dashboard</h4>
+                            <div class="flex items-end gap-2 flex-wrap">
+                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entry Sheet</label><select id="ld-sheet" onchange="setSheetSelection(this.value)" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5 max-w-[200px]"></select></div>
+                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">From</label><input type="date" id="ld-from" onchange="renderLedgerTable()" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></div>
+                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">To</label><input type="date" id="ld-to" onchange="renderLedgerTable()" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></div>
+                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Asset Unit</label><select id="ld-unit" onchange="renderLedgerTable()" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></select></div>
+                                <button onclick="document.getElementById('ld-from').value='';document.getElementById('ld-to').value='';document.getElementById('ld-unit').value='__ALL__';setSheetSelection('__ALL__')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700">Reset</button>
+                                <button onclick="openStatementFromLedger()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5"><i class="fa-solid fa-file-invoice"></i> Statement of Account</button>
+                            </div>
+                        </div>
+                        <div id="ld-kpis" class="grid grid-cols-2 lg:grid-cols-5 gap-3"></div>
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                            <div><h5 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Amount by Asset Unit</h5><div id="ld-chart-units" class="space-y-2"></div></div>
+                            <div><h5 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Tickets by Form</h5><div id="ld-chart-forms" class="space-y-2"></div></div>
+                            <div><h5 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Daily Amount</h5><div id="ld-chart-days" class="flex items-end gap-1 h-28 overflow-x-auto"></div></div>
                         </div>
                     </div>
 
@@ -370,6 +421,108 @@
                                 </thead>
                                 <tbody id="ledger-table-body" class="divide-y divide-slate-800/60 font-mono"></tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: DASHBOARD & STATEMENT OF ACCOUNT -->
+            <div id="tab-statement" class="tab-content flex-1 overflow-y-auto p-4 md:p-6 hidden">
+                <div class="max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 items-start">
+
+                    <!-- SIDE PANEL: coverage + target unit + signatories -->
+                    <aside class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4 lg:sticky lg:top-0">
+                        <div>
+                            <h3 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-sliders text-blue-400"></i> Statement Setup</h3>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Pick the coverage and the target asset unit. Everything on the right updates live.</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entry Sheet</label>
+                            <select id="stmt-sheet" onchange="setSheetSelection(this.value)" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-2.5 py-2"></select>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coverage From</label><input type="date" id="stmt-from" onchange="renderStatement()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div>
+                            <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Coverage To</label><input type="date" id="stmt-to" onchange="renderStatement()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div>
+                        </div>
+                        <div class="flex gap-1.5 flex-wrap">
+                            <button onclick="setStmtRange('month')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-slate-700">This Month</button>
+                            <button onclick="setStmtRange('lastmonth')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-slate-700">Last Month</button>
+                            <button onclick="setStmtRange('all')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-slate-700">All Dates</button>
+                        </div>
+
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Target Asset Unit</label>
+                            <select id="stmt-unit" onchange="renderStatement()" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-2.5 py-2"></select>
+                        </div>
+
+                        <details class="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                            <summary class="text-[11px] font-bold text-slate-300 uppercase cursor-pointer">Field Mapping</summary>
+                            <p class="text-[10px] text-slate-500 mt-2">Choose which sheet field feeds each part of the dashboard &amp; report. Report column headers follow the field you pick.</p>
+                            <div class="space-y-2 mt-3">
+                                <div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider">Core</div>
+<div><label class="block text-[10px] text-slate-400 uppercase mb-1">Asset Unit field</label><select id="stmt-unit-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Amount field</label><select id="stmt-amount-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div>
+                                <div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider pt-1">Report columns</div>
+<div><label class="block text-[10px] text-slate-400 uppercase mb-1">Date column</label><select id="stmt-date-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Reference / Ticket column</label><select id="stmt-ref-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Quantity column</label><select id="stmt-qty-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Rate column</label><select id="stmt-rate-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div>
+                                <div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider pt-1">Description column (combined)</div>
+<div><label class="block text-[10px] text-slate-400 uppercase mb-1">Description field 1</label><select id="stmt-desc1-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Description field 2</label><select id="stmt-desc2-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Description field 3</label><select id="stmt-desc3-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div>
+                                <div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider pt-1">Detail line (small text under description)</div>
+<div><label class="block text-[10px] text-slate-400 uppercase mb-1">Detail field 1</label><select id="stmt-sub1-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Detail field 2</label><select id="stmt-sub2-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div>
+                                <button type="button" onclick="resetStmtMapping()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700">Auto-detect mapping</button>
+                            </div>
+                        </details>
+
+                        <div class="space-y-2">
+                            <h4 class="text-[11px] font-bold text-slate-300 uppercase">Statement Details</h4>
+                            <input type="text" id="stmt-billed-to" oninput="saveStmtCfg(); renderStatement()" placeholder="Billed to / Account of" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2">
+                            <input type="text" id="stmt-project" oninput="saveStmtCfg(); renderStatement()" placeholder="Project / Site (optional)" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2">
+                            <textarea id="stmt-remarks" oninput="saveStmtCfg(); renderStatement()" rows="2" placeholder="Remarks (optional)" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></textarea>
+                        </div>
+
+                        <div class="space-y-2">
+                            <h4 class="text-[11px] font-bold text-slate-300 uppercase">Signatories</h4>
+                            <div class="grid grid-cols-2 gap-2"><input type="text" id="stmt-rev-name" oninput="saveStmtCfg(); renderStatement()" placeholder="Reviewed by" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"><input type="text" id="stmt-rev-role" oninput="saveStmtCfg(); renderStatement()" placeholder="Position" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div>
+                            <div class="grid grid-cols-2 gap-2"><input type="text" id="stmt-app-name" oninput="saveStmtCfg(); renderStatement()" placeholder="Approved by" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"><input type="text" id="stmt-app-role" oninput="saveStmtCfg(); renderStatement()" placeholder="Position" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div>
+                            <div class="grid grid-cols-2 gap-2"><input type="text" id="stmt-ver-name" oninput="saveStmtCfg(); renderStatement()" placeholder="Verified by" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"><input type="text" id="stmt-ver-role" oninput="saveStmtCfg(); renderStatement()" placeholder="Position" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div>
+                        </div>
+
+                        <button onclick="printStatement()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition flex items-center justify-center gap-2 shadow-md">
+                            <i class="fa-solid fa-print"></i> Print Statement of Account
+                        </button>
+                    </aside>
+
+                    <!-- MAIN: dashboard + statement preview -->
+                    <div class="space-y-6 min-w-0">
+                        <div id="stmt-kpis" class="grid grid-cols-2 xl:grid-cols-4 gap-3"></div>
+
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                                <h4 id="stmt-title-units" class="text-xs font-bold text-white uppercase tracking-wider mb-3">Amount by Asset Unit</h4>
+                                <div id="stmt-chart-units" class="space-y-2"></div>
+                            </div>
+                            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                                <h4 class="text-xs font-bold text-white uppercase tracking-wider mb-3">Daily Amount Trend</h4>
+                                <div id="stmt-chart-days" class="flex items-end gap-1 h-40 overflow-x-auto"></div>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                            <div class="p-4 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+                                <h4 class="text-xs font-bold text-white uppercase tracking-wider">Unit Summary &amp; Target Amounts</h4>
+                                <span class="text-[10px] text-slate-400">Edit a target amount to see the difference. Click a unit to select it.</span>
+                            </div>
+                            <div class="overflow-x-auto"><table class="w-full text-left text-xs text-slate-300">
+                                <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr>
+                                    <th class="p-3" id="stmt-th-unit">Asset Unit</th><th class="p-3 text-right">Transactions</th><th class="p-3 text-right" id="stmt-th-amt">Actual Amount</th><th class="p-3 text-right">Target Amount</th><th class="p-3 text-right">Difference</th>
+                                </tr></thead>
+                                <tbody id="stmt-unit-table" class="divide-y divide-slate-800/60 font-mono"></tbody>
+                            </table></div>
+                        </div>
+
+                        <div>
+                            <div class="flex items-center justify-between mb-2"><h4 class="text-xs font-bold text-white uppercase tracking-wider">Statement Preview</h4><span class="text-[10px] text-slate-400">What you see here is what prints (A4)</span></div>
+                            <div class="overflow-x-auto"><div id="stmt-preview" class="bg-white text-slate-900 rounded-xl shadow-xl mx-auto" style="max-width:820px;"></div></div>
                         </div>
                     </div>
                 </div>
@@ -688,8 +841,8 @@
                 <div class="max-w-5xl w-full mx-auto space-y-6">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-6">
                         <div>
-                            <h3 class="text-lg font-bold text-white">Advanced Form Builder & Field Manager</h3>
-                            <p class="text-xs text-slate-400 mt-0.5">Configure form titles, endpoint URLs, columns/positions, field types, and hidden states.</p>
+                            <h3 class="text-lg font-bold text-white">Advanced Form Builder & Formulas</h3>
+                            <p class="text-xs text-slate-400 mt-0.5">Configure form templates, field computations, time pickers, and role access control.</p>
                         </div>
                         <div class="flex gap-2">
                             <button onclick="openNewFormModal()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md transition flex items-center gap-2">
@@ -710,7 +863,7 @@
                         </div>
 
                         <div id="form-editor-workspace" class="md:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-6 space-y-6">
-                            <div class="text-center py-12 text-slate-500">Select a form from the left to configure fields and parameters.</div>
+                            <div class="text-center py-12 text-slate-500">Select a form from the left to configure fields and formulas.</div>
                         </div>
                     </div>
                 </div>
@@ -785,7 +938,7 @@
                                 <input type="text" id="setting-token" value="ULLSWATER-CORP-SECURE-9021" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-4 py-2.5 font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none">
                             </div>
                             <div>
-                                <label class="block text-xs font-medium text-slate-400 uppercase mb-1">Google Apps Script Web App URL (Global Default Endpoint)</label>
+                                <label class="block text-xs font-medium text-slate-400 uppercase mb-1">Google Apps Script Web App URL (Endpoint)</label>
                                 <input type="text" id="setting-webapp-id" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-4 py-2.5 font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none">
                             </div>
                         </div>
@@ -793,71 +946,24 @@
                         <div id="conn-panel-script-help" class="space-y-4 pt-2">
                             <div class="bg-slate-950 border border-amber-500/30 rounded-xl p-4 space-y-2">
                                 <div class="flex items-center justify-between gap-2">
-                                    <div class="text-xs font-bold text-amber-300"><i class="fa-solid fa-code mr-1"></i> Google Apps Script - Universal Database (two-way sync; replace your old script and redeploy)</div>
+                                    <div class="text-xs font-bold text-amber-300"><i class="fa-solid fa-code mr-1"></i> Google Apps Script (adds the "Scanned Ticket" column to your sheet)</div>
                                     <button type="button" onclick="copyAppsScript()" class="bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">Copy Script</button>
                                 </div>
-                                <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the URL above.</p>
-                                <textarea id="apps-script-code" readonly rows="12" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet UNIVERSAL DATABASE (two-way sync)
-// After pasting: Deploy > New deployment > Web app (Execute as: Me, Access: Anyone)
-const TOKEN = 'ULLSWATER-CORP-SECURE-9021'; // must match "Security Token" in the app
+                                <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this, replace everything → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the /exec URL above. Re-deploy after any change.</p>
+                                <textarea id="apps-script-code" readonly rows="8" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet receiver
+// Creates the tab + columns automatically, incl. "Scanned Ticket".
+// Re-sending the same Ticket ID updates its row (no duplicates).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
 
-function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
-
-function cell_(v, tz) {
-  if (v instanceof Date) {
-    if (v.getFullYear() &lt; 1950) return Utilities.formatDate(v, tz, 'HH:mm');
-    const hasTime = v.getHours() || v.getMinutes() || v.getSeconds();
-    return Utilities.formatDate(v, tz, hasTime ? "yyyy-MM-dd'T'HH:mm" : 'yyyy-MM-dd');
-  }
-  return (v === null || v === undefined) ? '' : String(v);
-}
-
-// Every device reads all tickets from here
-function doGet(e) {
-  const p = (e &amp;&amp; e.parameter) || {};
-  if (p.token !== TOKEN) return out_({ ok: false, error: 'bad token' });
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const tz = ss.getSpreadsheetTimeZone();
-  const tickets = [];
-  ss.getSheets().forEach(function (sh) {
-    if (sh.getLastRow() &lt; 2 || sh.getLastColumn() === 0) return;
-    const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
-    const h = vals[0].map(String);
-    const idc = h.indexOf('Ticket ID');
-    if (idc &lt; 0) return;
-    for (let r = 1; r &lt; vals.length; r++) {
-      const row = vals[r];
-      if (!row[idc]) continue;
-      const g = function (k) { const c = h.indexOf(k); return c &lt; 0 ? '' : row[c]; };
-      const data = {};
-      h.forEach(function (k, c) { if (k &amp;&amp; FIXED.indexOf(k) &lt; 0) data[k] = cell_(row[c], tz); });
-      const ts = g('Timestamp');
-      tickets.push({
-        id: String(row[idc]),
-        timestamp: ts instanceof Date ? Utilities.formatDate(ts, tz, 'yyyy-MM-dd HH:mm:ss') : String(ts),
-        user: String(g('Operator')),
-        formName: String(g('Form Name')) || sh.getName(),
-        status: String(g('Status')) || 'VALID',
-        sourceTicket: String(g('Scanned Ticket')),
-        data: data
-      });
-    }
-  });
-  return out_({ ok: true, tickets: tickets });
-}
-
-// Every entry, edit, void and delete is written here
 function doPost(e) {
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     const d = JSON.parse(e.postData.contents);
-    if (d.token !== TOKEN) return out_({ ok: false, error: 'bad token' });
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const tab = d.targetTab || d.formName || 'Ledger';
     if (d.action === 'delete') {
       const dsh = ss.getSheetByName(tab);
-      if (dsh &amp;&amp; dsh.getLastRow() > 1) {
+      if (dsh && dsh.getLastRow() > 1) {
         const dh = dsh.getRange(1, 1, 1, dsh.getLastColumn()).getValues()[0].map(String);
         const dc = dh.indexOf('Ticket ID') + 1;
         if (dc > 0) {
@@ -865,7 +971,7 @@ function doPost(e) {
           for (let i = dids.length - 1; i >= 0; i--) if (String(dids[i][0]) === String(d.id)) dsh.deleteRow(i + 2);
         }
       }
-      return out_({ ok: true, deleted: d.id });
+      return ContentService.createTextOutput(JSON.stringify({ ok: true, deleted: d.id })).setMimeType(ContentService.MimeType.JSON);
     }
     const sh = ss.getSheetByName(tab) || ss.insertSheet(tab);
     if (sh.getLastColumn() === 0) sh.getRange(1, 1, 1, FIXED.length).setValues([FIXED]);
@@ -878,6 +984,7 @@ function doPost(e) {
     };
     Object.keys(d.data || {}).forEach(function (k) { if (k !== 'Scanned Ticket') row[k] = d.data[k]; });
 
+    // add any missing column (e.g. "Scanned Ticket" on an existing sheet)
     Object.keys(row).forEach(function (k) {
       if (headers.indexOf(k) &lt; 0) { headers.push(k); sh.getRange(1, headers.length).setValue(k); }
     });
@@ -892,7 +999,7 @@ function doPost(e) {
     if (target) sh.getRange(target, 1, 1, values.length).setValues([values]);
     else sh.appendRow(values);
 
-    return out_({ ok: true });
+    return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
   } finally { lock.releaseLock(); }
 }
 </textarea>
@@ -1166,24 +1273,6 @@ function doPost(e) {
         </div>
     </div>
 
- <!-- FORM ACCESS MODAL -->
-    <div id="form-access-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-        <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div class="bg-slate-800 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
-                <h3 id="form-access-title" class="font-bold text-sm text-white flex items-center gap-2"><i class="fa-solid fa-key text-cyan-400"></i> Form Access</h3>
-                <button onclick="closeFormAccessModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <div class="p-6 space-y-3">
-                <p class="text-[11px] text-slate-400">Choose what this user can do on each form. View Only users can open the form and see its tickets but cannot submit, edit, void or delete.</p>
-                <div id="form-access-list" class="space-y-2 max-h-72 overflow-y-auto"></div>
-            </div>
-            <div class="bg-slate-900 px-6 py-4 border-t border-slate-800 flex justify-end gap-2">
-                <button onclick="closeFormAccessModal()" class="bg-slate-800 text-slate-300 text-xs font-semibold px-4 py-2.5 rounded-xl">Cancel</button>
-                <button onclick="saveFormAccess()" class="bg-blue-600 text-white text-xs font-semibold px-5 py-2.5 rounded-xl">Save Access</button>
-            </div>
-        </div>
-    </div>
-
     <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col space-y-2 pointer-events-none"></div>
 
     <script>
@@ -1266,20 +1355,19 @@ function doPost(e) {
             {
                 "id": "form_1791814906819",
                 "name": "HAULING",
-                "endpoint": "",
                 "icon": "fa-file-lines",
                 "allowedRoles": ["Administrator", "Data Entry Operator", "Auditor"],
                 "fields": [
-                    { "id": "f1", "label": "Date", "type": "date", "required": true, "hidden": false, "column": 1 },
-                    { "id": "f2", "label": "Ticket No.", "type": "barcode", "required": true, "hidden": false, "column": 1 },
-                    { "id": "f_7pxap", "label": "DT No.", "type": "dropdown", "required": true, "options": ["18", "23", "41", "43", "42"], "hidden": false, "column": 1 },
-                    { "id": "f_9ezy4", "label": "Activity", "type": "dropdown", "required": true, "options": ["Barging", "Direct Barging", "Stockpiling", "Waste"], "hidden": false, "column": 1 },
-                    { "id": "f_9iit1", "label": "Material", "type": "dropdown", "required": true, "options": ["L1A", "S2", "S1", "S3", "S4", "L2", "L3", "WS1", "BOULDER", "TOPSOIL"], "hidden": false, "column": 2 },
-                    { "id": "f_ygxzh", "label": "Source Area", "type": "dropdown", "required": true, "options": ["Pier Yard - PY2-A", "Pier Yard - PY1-A", "CAGA1 - BLK 10"], "hidden": false, "column": 2 },
-                    { "id": "f_tq99h", "label": "Dumping Area", "type": "dropdown", "required": true, "options": ["Causeway - CW1", "CAGA3 - MYC3-4"], "hidden": false, "column": 2 },
-                    { "id": "f_zeksw", "label": "Capacity", "type": "dropdown", "required": true, "options": ["18", "15"], "hidden": false, "column": 2 },
-                    { "id": "f_fr37b", "label": "Rate", "type": "numbers", "required": false, "hidden": false, "column": 1 },
-                    { "id": "f_e32en", "label": "Amount", "type": "computation", "required": false, "hidden": false, "formula": "(f_zeksw) * (f_fr37b)", "column": 2 }
+                    { "id": "f1", "label": "Date", "type": "date", "required": true, "hidden": false },
+                    { "id": "f2", "label": "Ticket No.", "type": "text", "required": true, "hidden": false },
+                    { "id": "f_7pxap", "label": "DT No.", "type": "dropdown", "required": true, "options": ["18", "23", "41", "43", "42"], "hidden": false },
+                    { "id": "f_9ezy4", "label": "Activity", "type": "dropdown", "required": true, "options": ["Barging", "Direct Barging", "Stockpiling", "Waste"], "hidden": false },
+                    { "id": "f_9iit1", "label": "Material", "type": "dropdown", "required": true, "options": ["L1A", "S2", "S1", "S3", "S4", "L2", "L3", "WS1", "BOULDER", "TOPSOIL"], "hidden": false },
+                    { "id": "f_ygxzh", "label": "Source Area", "type": "dropdown", "required": true, "options": ["Pier Yard - PY2-A", "Pier Yard - PY1-A", "CAGA1 - BLK 10"], "hidden": false },
+                    { "id": "f_tq99h", "label": "Dumping Area", "type": "dropdown", "required": true, "options": ["Causeway - CW1", "CAGA3 - MYC3-4"], "hidden": false },
+                    { "id": "f_zeksw", "label": "Capacity", "type": "dropdown", "required": true, "options": ["18", "15"], "hidden": false },
+                    { "id": "f_fr37b", "label": "Rate", "type": "numbers", "required": false, "hidden": false },
+                    { "id": "f_e32en", "label": "Amount", "type": "computation", "required": false, "hidden": false, "formula": "(f_zeksw) * (f_fr37b)" }
                 ]
             }
         ];
@@ -1336,9 +1424,6 @@ function doPost(e) {
         let qrCodeObj = null;
         let qrAutoEntryScanner = null;
         let qrAutoEntryStream = null;
-        let stopwatchTimers = {};
-        let signaturePads = {};
-        let draggedFieldIndex = null;
 
         window.onload = function() {
             applyNightVisionTheme(isNightVision);
@@ -1359,7 +1444,6 @@ function doPost(e) {
             loadGeofenceUI();
 
             if (autoGpsEnabled) startAutoGpsTracker();
-            startCloudAutoPull();
         };
 
         function getLocalTimestamp() {
@@ -1406,7 +1490,6 @@ function doPost(e) {
                 renderActiveFormFields();
                 renderMessengerUsersList();
                 showToast(`Welcome back, ${matchedUser.fullname || matchedUser.username}!`, 'success');
-                setTimeout(() => pullFromCloud(false), 500);
             } else {
                 showToast('Invalid credentials. Default: admin / admin123', 'error');
             }
@@ -1456,9 +1539,10 @@ function doPost(e) {
                 setTimeout(() => satnavLeafletMap.invalidateSize(), 200);
             }
             if(tabName === 'comms' && !activeCommsStream) startWebcamFeed();
+            if(tabName === 'ledger') renderLedgerTable();
+            if(tabName === 'statement') initStatementTab();
             if(tabName === 'mirror') refreshSheetMirror();
             if(tabName === 'transmissions') renderTransmissionsOverview();
-            if(tabName === 'ledger') pullFromCloud(false);
         }
 
         function refreshSheetMirror() {
@@ -1776,6 +1860,9 @@ function doPost(e) {
             }).join('');
         }
 
+        // ===== Rear (environment) camera starter for phones =====
+        // One stream per scanner: prefers the back camera, falls back gracefully,
+        // and never silently opens the selfie camera unless nothing else exists.
         function stopVideoElementStream(videoId) {
             const v = document.getElementById(videoId);
             if (v && v.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
@@ -1815,6 +1902,7 @@ function doPost(e) {
                     try { reader.reset(); } catch (_) {}
                 }
             }
+            // Fallback: enumerate devices and choose a back-facing one by label
             try {
                 const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
                 tmp.getTracks().forEach(t => t.stop());
@@ -1875,122 +1963,6 @@ function doPost(e) {
             applyScannedValue(res.data.text.trim());
         }
 
-        async function triggerNfcRead(fieldId) {
-            if ('NDEFReader' in window) {
-                try {
-                    const ndef = new NDEFReader();
-                    await ndef.scan();
-                    showToast('NFC Scanner activated. Hold tag near device...', 'info');
-                    ndef.addEventListener("reading", ({ message, serialNumber }) => {
-                        const el = document.getElementById(`field_${fieldId}`);
-                        if (el) el.value = serialNumber || "NFC-TAG-DETECTED";
-                        showToast("NFC Tag Read Successfully!", "success");
-                    });
-                } catch (error) {
-                    showToast("NFC Error or Permission Denied", "error");
-                }
-            } else {
-                const dummyTag = "NFC-" + Math.random().toString(36).substring(2, 8).toUpperCase();
-                const el = document.getElementById(`field_${fieldId}`);
-                if (el) el.value = dummyTag;
-                showToast("NFC Simulated: " + dummyTag, "info");
-            }
-        }
-
-        async function captureGeoLocation(fieldId) {
-            if ("geolocation" in navigator) {
-                navigator.geolocation.getCurrentPosition(position => {
-                    const coords = `${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`;
-                    const el = document.getElementById(`field_${fieldId}`);
-                    if (el) el.value = coords;
-                    showToast("Location captured!", "success");
-                }, () => {
-                    showToast("Unable to fetch location", "error");
-                });
-            } else {
-                showToast("Geolocation not supported", "error");
-            }
-        }
-
-        function handleImageUpload(event, fieldId) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const imgPreview = document.getElementById(`preview_${fieldId}`);
-                const hiddenInput = document.getElementById(`field_${fieldId}`);
-                if (imgPreview) { imgPreview.src = e.target.result; imgPreview.classList.remove('hidden'); }
-                if (hiddenInput) hiddenInput.value = e.target.result;
-            };
-            reader.readAsDataURL(file);
-        }
-
-        function toggleStopwatch(fieldId) {
-            const btn = document.getElementById(`btn_sw_${fieldId}`);
-            const input = document.getElementById(`field_${fieldId}`);
-            if (!stopwatchTimers[fieldId]) {
-                let seconds = 0;
-                stopwatchTimers[fieldId] = setInterval(() => {
-                    seconds++;
-                    const hrs = String(Math.floor(seconds / 3600)).padStart(2, '0');
-                    const mins = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
-                    const secs = String(seconds % 60).padStart(2, '0');
-                    if (input) input.value = `${hrs}:${mins}:${secs}`;
-                }, 1000);
-                if (btn) { btn.innerText = "Stop"; btn.className = "bg-rose-600 text-white text-xs px-3 py-2 rounded-xl font-bold"; }
-            } else {
-                clearInterval(stopwatchTimers[fieldId]);
-                stopwatchTimers[fieldId] = null;
-                if (btn) { btn.innerText = "Start"; btn.className = "bg-emerald-600 text-white text-xs px-3 py-2 rounded-xl font-bold"; }
-            }
-        }
-
-        function initSignatureCanvas(fieldId) {
-            const canvas = document.getElementById(`sig_canvas_${fieldId}`);
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            let drawing = false;
-
-            const getPos = (e) => {
-                const rect = canvas.getBoundingClientRect();
-                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-                return { x: clientX - rect.left, y: clientY - rect.top };
-            };
-
-            const startDraw = (e) => { drawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
-            const moveDraw = (e) => {
-                if (!drawing) return;
-                const p = getPos(e);
-                ctx.strokeStyle = '#38bdf8';
-                ctx.lineWidth = 2;
-                ctx.lineTo(p.x, p.y);
-                ctx.stroke();
-            };
-            const stopDraw = () => {
-                if (!drawing) return;
-                drawing = false;
-                const hiddenInput = document.getElementById(`field_${fieldId}`);
-                if (hiddenInput) hiddenInput.value = canvas.toDataURL();
-            };
-
-            canvas.addEventListener('mousedown', startDraw);
-            canvas.addEventListener('mousemove', moveDraw);
-            canvas.addEventListener('mouseup', stopDraw);
-            canvas.addEventListener('touchstart', startDraw);
-            canvas.addEventListener('touchmove', moveDraw);
-            canvas.addEventListener('touchend', stopDraw);
-        }
-
-        function clearSignatureCanvas(fieldId) {
-            const canvas = document.getElementById(`sig_canvas_${fieldId}`);
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            const hiddenInput = document.getElementById(`field_${fieldId}`);
-            if (hiddenInput) hiddenInput.value = '';
-        }
-
         async function openConnectionScannerModal() {
             document.getElementById('connection-scanner-modal').classList.remove('hidden');
             connectionZxingReader = new ZXing.BrowserMultiFormatReader(makeQrHints());
@@ -2008,41 +1980,9 @@ function doPost(e) {
         }
 
         // Form Builder & Field Rendering
-        function getFormAccess(formId) {
-            if (!activeUser) return 'none';
-            if (activeUserRole === 'Administrator') return 'edit';
-            const u = users.find(x => x.username === activeUser);
-            if (!u || !u.formAccess) return 'edit';
-            return u.formAccess[formId] || 'none';
-        }
-        function canViewForm(formId) { return getFormAccess(formId) !== 'none'; }
-        function canEditForm(formId) { return getFormAccess(formId) === 'edit'; }
-
         function renderFormSelector() {
             const select = document.getElementById('entry-form-select');
-            const permitted = forms.filter(f => canViewForm(f.id));
-            if (permitted.length && !permitted.find(f => f.id === activeFormId)) activeFormId = permitted[0].id;
-            select.innerHTML = permitted.map(f => `<option value="${f.id}" ${f.id === activeFormId ? 'selected' : ''}>${f.name}${canEditForm(f.id) ? '' : ' (View only)'}</option>`).join('');
-        }
-
-        // Remember-last-value storage
-        function getRememberedValues(formId) {
-            try { return (JSON.parse(localStorage.getItem('ullswater_last_values')) || {})[(activeUser || 'admin') + '|' + formId] || {}; } catch (e) { return {}; }
-        }
-        function saveRememberedValues(form) {
-            try {
-                const all = JSON.parse(localStorage.getItem('ullswater_last_values')) || {};
-                const key = (activeUser || 'admin') + '|' + form.id;
-                const store = all[key] || {};
-                form.fields.forEach(field => {
-                    if (!field.remember) return;
-                    const el = document.getElementById(`field_${field.id}`);
-                    if (!el) return;
-                    store[field.id] = field.type === 'checkbox' ? el.checked : el.value;
-                });
-                all[key] = store;
-                localStorage.setItem('ullswater_last_values', JSON.stringify(all));
-            } catch (e) {}
+            select.innerHTML = forms.map(f => `<option value="${f.id}" ${f.id === activeFormId ? 'selected' : ''}>${f.name}</option>`).join('');
         }
 
         function onActiveFormChange(formId) { activeFormId = formId; renderActiveFormFields(); }
@@ -2052,101 +1992,28 @@ function doPost(e) {
             container.innerHTML = '';
             const form = forms.find(f => f.id === activeFormId);
             if(!form) return;
-            if(!canViewForm(form.id)) {
-                container.innerHTML = '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center text-xs text-slate-400">You do not have access to any form. Ask an Administrator to assign form permissions.</div>';
-                return;
-            }
-
-            const grid = document.createElement('div');
-            grid.className = 'grid grid-cols-1 md:grid-cols-2 gap-4';
 
             form.fields.forEach(field => {
                 if(field.hidden) return;
                 const div = document.createElement('div');
                 div.className = 'bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2 shadow-sm';
                 let inputHTML = '';
-
-                switch(field.type) {
-                    case 'barcode':
-                        inputHTML = `<div class="flex gap-2"><input type="text" id="field_${field.id}" placeholder="Scan barcode..." class="flex-1 bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5"><button type="button" onclick="openScannerModal('${field.id}')" class="bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2.5 rounded-xl text-xs"><i class="fa-solid fa-barcode"></i> Scan</button></div>`;
-                        break;
-                    case 'nfc':
-                        inputHTML = `<div class="flex gap-2"><input type="text" id="field_${field.id}" readonly placeholder="Tap NFC Tag..." class="flex-1 bg-slate-950 border border-slate-700 text-cyan-300 font-mono text-sm rounded-xl px-3.5 py-2.5"><button type="button" onclick="triggerNfcRead('${field.id}')" class="bg-cyan-600 hover:bg-cyan-500 text-white px-3.5 py-2.5 rounded-xl text-xs"><i class="fa-solid fa-wifi"></i> NFC</button></div>`;
-                        break;
-                    case 'text_ocr':
-                        inputHTML = `<div class="flex gap-2"><input type="text" id="field_${field.id}" placeholder="Text or OCR scan..." class="flex-1 bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5"><button type="button" onclick="openScannerModal('${field.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2.5 rounded-xl text-xs"><i class="fa-solid fa-eye"></i> OCR</button></div>`;
-                        break;
-                    case 'numbers':
-                        inputHTML = `<input type="number" id="field_${field.id}" oninput="triggerFieldCalculations()" placeholder="0.00" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
-                        break;
-                    case 'dropdown':
-                    case 'list':
-                        const opts = (field.options || []).map(o => `<option value="${o}">${o}</option>`).join('');
-                        inputHTML = `<select id="field_${field.id}" onchange="triggerFieldCalculations()" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5"><option value="">Select option...</option>${opts}</select>`;
-                        break;
-                    case 'date':
-                        inputHTML = `<input type="date" id="field_${field.id}" value="${new Date().toISOString().split('T')[0]}" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
-                        break;
-                    case 'time':
-                        inputHTML = `<input type="time" id="field_${field.id}" value="${getCurrentTimeString()}" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
-                        break;
-                    case 'datetime':
-                        inputHTML = `<input type="datetime-local" id="field_${field.id}" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
-                        break;
-                    case 'checkbox':
-                        inputHTML = `<label class="flex items-center space-x-3 cursor-pointer pt-1"><input type="checkbox" id="field_${field.id}" class="w-5 h-5 rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-blue-500"><span class="text-xs text-slate-300">Enable / Confirm</span></label>`;
-                        break;
-                    case 'image':
-                        inputHTML = `<div class="space-y-2"><input type="file" accept="image/*" onchange="handleImageUpload(event, '${field.id}')" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-white hover:file:bg-slate-700"><input type="hidden" id="field_${field.id}"><img id="preview_${field.id}" class="h-20 rounded-xl object-cover hidden border border-slate-800"></div>`;
-                        break;
-                    case 'signature':
-                        inputHTML = `<div class="space-y-2"><canvas id="sig_canvas_${field.id}" width="280" height="100" class="signature-canvas w-full"></canvas><input type="hidden" id="field_${field.id}"><button type="button" onclick="clearSignatureCanvas('${field.id}')" class="text-[11px] text-rose-400 hover:underline"><i class="fa-solid fa-eraser"></i> Clear Pad</button></div>`;
-                        break;
-                    case 'location':
-                        inputHTML = `<div class="flex gap-2"><input type="text" id="field_${field.id}" readonly placeholder="Lat, Lng..." class="flex-1 bg-slate-950 border border-slate-700 text-emerald-400 font-mono text-sm rounded-xl px-3.5 py-2.5"><button type="button" onclick="captureGeoLocation('${field.id}')" class="bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2.5 rounded-xl text-xs"><i class="fa-solid fa-location-dot"></i> GPS</button></div>`;
-                        break;
-                    case 'static_text':
-                        inputHTML = `<div class="p-3 bg-slate-950 rounded-xl border border-slate-800 text-xs text-slate-400 italic">${field.staticContent || 'Static information displayed to operator.'}</div>`;
-                        break;
-                    case 'stopwatch':
-                        inputHTML = `<div class="flex gap-2"><input type="text" id="field_${field.id}" readonly value="00:00:00" class="flex-1 bg-slate-950 border border-slate-700 text-amber-300 font-mono text-sm rounded-xl px-3.5 py-2.5"><button type="button" id="btn_sw_${field.id}" onclick="toggleStopwatch('${field.id}')" class="bg-emerald-600 text-white text-xs px-3.5 py-2.5 rounded-xl font-bold">Start</button></div>`;
-                        break;
-                    case 'computation':
-                        inputHTML = `<input type="text" id="field_${field.id}" readonly placeholder="Auto-calculated..." class="w-full bg-slate-950 border border-blue-500/50 text-emerald-400 font-bold text-sm rounded-xl px-3.5 py-2.5">`;
-                        break;
-                    default:
-                        inputHTML = `<input type="text" id="field_${field.id}" oninput="triggerFieldCalculations()" placeholder="Enter value..." class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
+                if(field.type === 'dropdown') {
+                    const opts = (field.options || []).map(o => `<option value="${o}">${o}</option>`).join('');
+                    inputHTML = `<select id="field_${field.id}" onchange="triggerFieldCalculations()" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5"><option value="">Select option...</option>${opts}</select>`;
+                } else if(field.type === 'date') {
+                    inputHTML = `<input type="date" id="field_${field.id}" value="${new Date().toISOString().split('T')[0]}" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
+                } else if(field.type === 'numbers') {
+                    inputHTML = `<input type="number" id="field_${field.id}" oninput="triggerFieldCalculations()" placeholder="0.00" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
+                } else if(field.type === 'computation') {
+                    inputHTML = `<input type="text" id="field_${field.id}" readonly placeholder="Auto-calculated..." class="w-full bg-slate-950 border border-blue-500/50 text-emerald-400 font-bold text-sm rounded-xl px-3.5 py-2.5">`;
+                } else {
+                    inputHTML = `<input type="text" id="field_${field.id}" oninput="triggerFieldCalculations()" placeholder="Enter value..." class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">`;
                 }
-
-                div.innerHTML = `<label class="block text-xs font-semibold text-slate-300 uppercase">${field.label}${(field.required && field.type !== 'static_text' && field.type !== 'computation') ? ' <span class="text-rose-400">*</span>' : ''}</label>` + inputHTML;
-                
-                grid.appendChild(div);
+                div.innerHTML = `<label class="block text-xs font-semibold text-slate-300 uppercase">${field.label}</label>` + inputHTML;
+                container.appendChild(div);
             });
-
-            container.appendChild(grid);
-
-            form.fields.forEach(f => {
-                if (f.type === 'signature' && !f.hidden) setTimeout(() => initSignatureCanvas(f.id), 50);
-            });
-
-            const remembered = getRememberedValues(form.id);
-            form.fields.forEach(f => {
-                if (!f.remember || f.hidden || remembered[f.id] === undefined) return;
-                const el = document.getElementById(`field_${f.id}`);
-                if (!el) return;
-                if (f.type === 'checkbox') el.checked = !!remembered[f.id];
-                else el.value = remembered[f.id];
-            });
-
             triggerFieldCalculations();
-
-            if (!canEditForm(form.id)) {
-                container.querySelectorAll('input, select, textarea, button').forEach(el => { el.disabled = true; });
-                const banner = document.createElement('div');
-                banner.className = 'bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold rounded-xl px-4 py-3 mb-4';
-                banner.innerHTML = '<i class="fa-solid fa-eye mr-1"></i> View only - you are not permitted to submit entries on this form.';
-                container.prepend(banner);
-            }
         }
 
         function triggerFieldCalculations() {
@@ -2191,32 +2058,17 @@ function doPost(e) {
             if(e) e.preventDefault();
             const form = forms.find(f => f.id === activeFormId);
             if(!form) return;
-            if(!canEditForm(form.id)) { showToast('View only: you are not permitted to submit on this form', 'error'); return; }
 
             let recordData = {};
             form.fields.forEach(field => {
-                if (field.type === 'static_text') return;
                 const el = document.getElementById(`field_${field.id}`);
-                if(el) {
-                    if (field.type === 'checkbox') recordData[field.label] = el.checked ? 'YES' : 'NO';
-                    else recordData[field.label] = el.value;
-                }
+                if(el) recordData[field.label] = el.value;
             });
 
+            // Reference of the printed ticket that was scanned -> stored inside the data entry itself
             if (pendingScanRef) recordData[SCAN_REF_LABEL] = pendingScanRef;
 
-            const missing = form.fields.filter(f => f.required && !f.hidden && f.type !== 'static_text' && f.type !== 'computation' &&
-                (f.type === 'checkbox' ? recordData[f.label] !== 'YES' : !String(recordData[f.label] || '').trim()));
-            document.querySelectorAll('#dynamic-entry-form .border-rose-500').forEach(el => el.classList.remove('border-rose-500'));
-            if (missing.length) {
-                missing.forEach(f => { const el = document.getElementById(`field_${f.id}`); if (el && el.type !== 'checkbox') el.classList.add('border-rose-500'); });
-                showToast('Required: ' + missing.map(f => f.label).join(', '), 'error');
-                return;
-            }
-            saveRememberedValues(form);
-
-            let ticketId;
-            do { ticketId = 'TKT-2026-' + String(Math.floor(100000 + Math.random() * 900000)); } while (logs.some(l => l.id === ticketId));
+            const ticketId = 'TKT-2026-' + String(Math.floor(1000 + Math.random() * 9000));
             const newLog = {
                 id: ticketId, timestamp: getLocalTimestamp(), user: activeUser || 'admin',
                 formName: form.name, formId: form.id, data: recordData, status: 'VALID',
@@ -2228,21 +2080,19 @@ function doPost(e) {
             logs.unshift(newLog);
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
             renderLedgerTable();
-            postLogToGoogleSheet(newLog, form.name, form.endpoint);
+            postLogToGoogleSheet(newLog, form.name);
             setScannedRefField(usedScanRef, ticketId);
             openTicketModal(ticketId);
             showToast(`Ticket ${ticketId} created & logged!`, 'success');
         }
 
-        function postLogToGoogleSheet(logEntry, sheetTabName, customEndpoint) {
+        function postLogToGoogleSheet(logEntry, sheetTabName) {
             const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
-            const targetUrl = customEndpoint && customEndpoint.startsWith('http') ? customEndpoint : settings.webappId;
-            if(targetUrl && targetUrl.startsWith('http')) {
-                fetch(targetUrl, {
+            if(settings.webappId && settings.webappId.startsWith('http')) {
+                fetch(settings.webappId, {
                     method: 'POST', mode: 'no-cors',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        token: getSyncToken(),
                         ...logEntry,
                         targetTab: sheetTabName,
                         sourceTicket: logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || '',
@@ -2253,143 +2103,62 @@ function doPost(e) {
             }
         }
 
-        // ===== Universal database (Google Sheet two-way sync) =====
-        const DEFAULT_SYNC_TOKEN = 'ULLSWATER-CORP-SECURE-9021';
-        let recentlyDeleted = {};
-        let cloudPullBusy = false;
-        let cloudAutoTimer = null;
-
-        function getSyncToken() {
-            const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
-            return settings.token || DEFAULT_SYNC_TOKEN;
-        }
-        function getSyncEndpoints() {
-            const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
-            const set = new Set();
-            if (settings.webappId && settings.webappId.trim().startsWith('http')) set.add(settings.webappId.trim());
-            forms.forEach(f => { if (f.endpoint && f.endpoint.trim().startsWith('http')) set.add(f.endpoint.trim()); });
-            return Array.from(set);
-        }
-        function setCloudStatus(text, isError) {
-            const el = document.getElementById('cloud-sync-status');
-            if (!el) return;
-            el.innerText = text;
-            el.className = 'text-[10px] font-mono ' + (isError ? 'text-rose-400' : 'text-slate-400');
-        }
-        function sameTicketData(a, b) {
-            a = a || {}; b = b || {};
-            const keys = new Set(Object.keys(a).concat(Object.keys(b)));
-            for (const k of keys) { if (String(a[k] == null ? '' : a[k]) !== String(b[k] == null ? '' : b[k])) return false; }
-            return true;
-        }
-        function buildDataFromRemote(form, t, local) {
-            const d = {};
-            const rd = t.data || {};
-            const keepNum = (k, v) => {
-                const lv = local && local.data ? local.data[k] : undefined;
-                if (lv !== undefined && lv !== '' && v !== '' && !isNaN(lv) && !isNaN(v) && parseFloat(lv) === parseFloat(v)) return lv;
-                return v;
-            };
-            if (form) form.fields.forEach(f => {
-                if (f.type === 'static_text') return;
-                d[f.label] = keepNum(f.label, rd[f.label] !== undefined ? String(rd[f.label]) : '');
-            });
-            Object.keys(rd).forEach(k => {
-                if (d[k] === undefined && k !== SCAN_REF_LABEL && String(rd[k]) !== '') d[k] = keepNum(k, String(rd[k]));
-            });
-            if (t.sourceTicket) d[SCAN_REF_LABEL] = t.sourceTicket;
-            return d;
-        }
-        function mergeCloudTickets(remote, allOk) {
-            const now = Date.now();
-            let changed = 0;
-            const remoteIds = new Set();
-            remote.forEach(t => {
-                if (!t || !t.id) return;
-                if (recentlyDeleted[t.id] && recentlyDeleted[t.id] > now) return;
-                remoteIds.add(t.id);
-                const form = forms.find(f => f.name.toLowerCase() === String(t.formName || '').toLowerCase());
-                const local = logs.find(l => l.id === t.id);
-                const data = buildDataFromRemote(form, t, local);
-                const status = t.status === 'VOID' ? 'VOID' : 'VALID';
-                if (!local) {
-                    logs.push({ id: t.id, timestamp: t.timestamp, user: t.user, formName: form ? form.name : t.formName, formId: form ? form.id : '', data, status, sourceTicket: t.sourceTicket || '', synced: true });
-                    changed++;
-                    return;
-                }
-                local.synced = true;
-                const same = local.timestamp === t.timestamp && local.user === t.user && local.status === status && (local.sourceTicket || '') === (t.sourceTicket || '') && sameTicketData(local.data, data);
-                if (local._dirty) { if (same) delete local._dirty; return; }
-                if (!same) {
-                    Object.assign(local, { timestamp: t.timestamp, user: t.user, status, sourceTicket: t.sourceTicket || '', data });
-                    changed++;
-                }
-            });
-            if (allOk) {
-                const before = logs.length;
-                logs = logs.filter(l => !(l.synced && !remoteIds.has(l.id) && !l._dirty));
-                changed += before - logs.length;
-            }
-            logs.sort((x, y) => String(y.timestamp).localeCompare(String(x.timestamp)));
-            localStorage.setItem('ullswater_logs', JSON.stringify(logs));
-            return changed;
-        }
-        async function pullFromCloud(manual) {
-            if (!activeUser || cloudPullBusy) return;
-            const eps = getSyncEndpoints();
-            if (!eps.length) { if (manual) showToast('Configure Web App URL in Connection tab first', 'error'); return; }
-            cloudPullBusy = true;
-            setCloudStatus('Syncing...');
-            let all = [], allOk = true;
-            for (const ep of eps) {
-                try {
-                    const res = await fetch(ep + (ep.includes('?') ? '&' : '?') + 'action=list&token=' + encodeURIComponent(getSyncToken()), { cache: 'no-store' });
-                    const j = await res.json();
-                    if (!j || !j.ok) throw new Error((j && j.error) || 'bad response');
-                    all = all.concat(j.tickets || []);
-                } catch (e) { allOk = false; }
-            }
-            cloudPullBusy = false;
-            if (!allOk && !all.length) {
-                setCloudStatus('Cloud unreachable', true);
-                if (manual) showToast('Cannot read the cloud sheet. Redeploy the latest Apps Script as a New deployment and check the URL / token.', 'error');
-                return;
-            }
-            const changed = mergeCloudTickets(all, allOk);
-            setCloudStatus('Synced ' + getCurrentTimeString() + (allOk ? '' : ' (partial)'), !allOk);
-            if (changed > 0 || manual) { renderLedgerTable(); renderTransmissionsOverview(); }
-            if (manual) showToast(changed > 0 ? `Ledger updated from cloud (${changed} change${changed > 1 ? 's' : ''})` : 'Ledger already up to date', 'success');
-        }
-        function pushPendingLogs() {
-            logs.filter(l => !l.synced || l._dirty).forEach(l => {
-                const form = forms.find(f => f.id === l.formId);
-                postLogToGoogleSheet(l, l.formName, form ? form.endpoint : '');
-            });
-        }
-        async function cloudSyncCycle() {
-            if (!activeUser || !getSyncEndpoints().length) return;
-            await pullFromCloud(false);
-            pushPendingLogs();
-        }
-        function startCloudAutoPull() {
-            if (cloudAutoTimer) clearInterval(cloudAutoTimer);
-            cloudAutoTimer = setInterval(cloudSyncCycle, 15000);
-            document.addEventListener('visibilitychange', () => { if (!document.hidden) cloudSyncCycle(); });
-            setTimeout(cloudSyncCycle, 1500);
-        }
-
-        async function syncToCloudEndpoint() {
+        function syncToCloudEndpoint() {
             const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
             if(!settings.webappId) { showToast('Configure Web App URL in Connection tab first', 'error'); return; }
-            await pullFromCloud(false);
-            pushPendingLogs();
-            showToast('Pending entries sent to cloud sheet; pulling latest...', 'success');
-            setTimeout(() => pullFromCloud(true), 2500);
+            logs.forEach(l => postLogToGoogleSheet(l, l.formName));
+            showToast('All ledger records synchronized to cloud sheet', 'success');
+        }
+
+        function getLedgerFiltered() {
+            if (!stmtCfg) loadStmtCfg();
+            const g = id => (document.getElementById(id) || {}).value || '';
+            const from = g('ld-from'), to = g('ld-to'), unit = g('ld-unit') || '__ALL__';
+            return logs.filter(l => { const d = getLogDate(l); return sheetMatch(l) && (!from || d >= from) && (!to || d <= to) && (unit === '__ALL__' || getLogUnit(l) === unit); });
+        }
+
+        function renderLedgerDashboard(list) {
+            const kp = document.getElementById('ld-kpis'); if (!kp) return;
+            const live = list.filter(l => l.status !== 'VOID'), voided = list.length - live.length;
+            const total = live.reduce((s, l) => s + getLogAmount(l), 0);
+            const unitMap = {}, formMap = {}, dayMap = {};
+            live.forEach(l => { const u = getLogUnit(l), a = getLogAmount(l), d = getLogDate(l); unitMap[u] = (unitMap[u] || 0) + a; formMap[l.formName] = (formMap[l.formName] || 0) + 1; dayMap[d] = (dayMap[d] || 0) + a; });
+            const kpi = (lbl, val, icon, col) => `<div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3"><div class="flex items-center justify-between"><span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">${lbl}</span><i class="fa-solid ${icon} ${col}"></i></div><div class="text-lg font-bold text-white mt-1 font-mono truncate">${val}</div></div>`;
+            kp.innerHTML = kpi('Total Tickets', list.length, 'fa-ticket', 'text-blue-400') + kpi('Valid', live.length, 'fa-circle-check', 'text-emerald-400') + kpi('Void', voided, 'fa-ban', 'text-rose-400') +
+                kpi('Total Amount', fmtMoney(total), 'fa-coins', 'text-amber-400') + kpi('Avg / Ticket', fmtMoney(live.length ? total / live.length : 0), 'fa-calculator', 'text-slate-300');
+            const bars = (map, fmt, color) => { const ent = Object.entries(map).sort((a, b) => b[1] - a[1]); const mx = Math.max(1, ...ent.map(e => e[1]));
+                return ent.length ? ent.map(([k, v]) => `<div><div class="flex justify-between text-[11px] text-slate-300 mb-0.5"><span class="truncate pr-2">${escH(k)}</span><span class="font-mono">${fmt(v)}</span></div><div class="h-2 bg-slate-800 rounded-full overflow-hidden"><div class="h-full ${color} rounded-full" style="width:${Math.max(2, v / mx * 100)}%"></div></div></div>`).join('') : '<p class="text-xs text-slate-500">No data.</p>'; };
+            document.getElementById('ld-chart-units').innerHTML = bars(unitMap, fmtMoney, 'bg-blue-500');
+            document.getElementById('ld-chart-forms').innerHTML = bars(formMap, v => v, 'bg-amber-500');
+            const dk = Object.keys(dayMap).sort(), dmx = Math.max(1, ...Object.values(dayMap));
+            document.getElementById('ld-chart-days').innerHTML = dk.length ? dk.map(d => `<div class="flex flex-col items-center justify-end h-full min-w-[20px] flex-1" title="${fmtDate(d)}: ${fmtMoney(dayMap[d])}"><div class="w-full bg-emerald-500/80 rounded-t" style="height:${Math.max(3, dayMap[d] / dmx * 100)}%"></div><span class="text-[8px] text-slate-500 mt-1">${d.slice(8)}</span></div>`).join('') : '<p class="text-xs text-slate-500">No data.</p>';
+        }
+
+        function refreshLedgerUnitOptions() {
+            const sel = document.getElementById('ld-unit'); if (!sel) return;
+            const prev = sel.value || '__ALL__';
+            const units = [...new Set(logs.filter(sheetMatch).map(getLogUnit))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+            sel.innerHTML = `<option value="__ALL__">All units</option>` + units.map(u => `<option value="${escH(u)}">${escH(u)}</option>`).join('');
+            sel.value = units.includes(prev) ? prev : '__ALL__';
+        }
+
+        function openStatementFromLedger() {
+            switchTab('statement');
+            const f = document.getElementById('ld-from').value, t = document.getElementById('ld-to').value, u = document.getElementById('ld-unit').value;
+            if (f) document.getElementById('stmt-from').value = f;
+            if (t) document.getElementById('stmt-to').value = t;
+            renderStatement();
+            if (u && u !== '__ALL__') { document.getElementById('stmt-unit').value = u; renderStatement(); }
         }
 
         function renderLedgerTable() {
             const tbody = document.getElementById('ledger-table-body');
-            tbody.innerHTML = logs.filter(l => (!l.formId || canViewForm(l.formId)) && (activeUserRole === 'Administrator' || l.user === activeUser)).map(log => `
+            if (!stmtCfg) loadStmtCfg();
+            fillSheetSelects();
+            refreshLedgerUnitOptions();
+            const shown = getLedgerFiltered();
+            renderLedgerDashboard(shown);
+            tbody.innerHTML = shown.map(log => `
                 <tr class="hover:bg-slate-900/50 border-b border-slate-800/60 ${log.status === 'VOID' ? 'opacity-60 line-through decoration-rose-500/60' : ''}">
                     <td class="p-3.5 font-bold text-blue-400"><button onclick="openTicketModal('${log.id}')">${log.id}</button></td>
                     <td class="p-3.5">${(log.sourceTicket || (log.data && log.data[SCAN_REF_LABEL])) ? `<span class="bg-amber-500/10 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold"><i class="fa-solid fa-qrcode mr-1"></i>${log.sourceTicket || log.data[SCAN_REF_LABEL]}</span>` : '<span class="text-slate-600">—</span>'}</td>
@@ -2402,16 +2171,17 @@ function doPost(e) {
                         : '<span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full text-[10px]">VALID</span>'}</td>
                     <td class="p-3.5 text-right space-x-1 whitespace-nowrap">
                         <button onclick="openTicketModal('${log.id}')" title="View ticket" class="bg-slate-800 text-blue-300 px-2 py-1 rounded text-xs"><i class="fa-solid fa-ticket"></i></button>
-                        ${(!log.formId || canEditForm(log.formId)) ? `
                         <button onclick="openEditModal('${log.id}')" title="Edit" class="bg-slate-800 text-amber-300 px-2 py-1 rounded text-xs"><i class="fa-solid fa-pen"></i></button>
                         <button onclick="toggleVoidEntry('${log.id}')" title="${log.status === 'VOID' ? 'Restore (un-void)' : 'Void'}" class="bg-slate-800 ${log.status === 'VOID' ? 'text-emerald-300' : 'text-orange-300'} px-2 py-1 rounded text-xs"><i class="fa-solid ${log.status === 'VOID' ? 'fa-rotate-left' : 'fa-ban'}"></i></button>
                         <button onclick="deleteLedgerEntry('${log.id}')" title="Delete" class="bg-slate-800 text-rose-400 px-2 py-1 rounded text-xs"><i class="fa-solid fa-trash-can"></i></button>
-                        ` : ''}
                     </td>
                 </tr>`).join('');
             updateSidebarStats();
         }
 
+        // ===== Scannable QR renderer =====
+        // Black on pure white, integer pixel-per-module scale, 4-module quiet zone,
+        // medium error correction (low density) and a built-in decode self-check.
         let currentQrCanvas = null, currentQrTicketId = '';
 
         function buildQrMatrix(text) {
@@ -2427,7 +2197,7 @@ function doPost(e) {
                         for (let r = 0; r < n; r++) { m.push([]); for (let c = 0; c < n; c++) m[r].push(model.isDark(r, c)); }
                         return { matrix: m, n, level: lvl === QRCode.CorrectLevel.M ? 'M' : 'L' };
                     }
-                } catch (e) { }
+                } catch (e) { /* too long for this level, try next */ }
             }
             return null;
         }
@@ -2458,9 +2228,11 @@ function doPost(e) {
             canvas.style.maxWidth = '100%'; canvas.style.height = 'auto';
             container.appendChild(canvas);
             currentQrCanvas = canvas;
+            // print sizes: ~0.6mm per module on A4, capped to fit 58mm paper
             container.style.setProperty('--qr-mm-a4', Math.min(60, total * 0.6).toFixed(1) + 'mm');
             container.style.setProperty('--qr-mm-58', Math.min(46, total * 0.6).toFixed(1) + 'mm');
 
+            // self-check: decode what we just drew
             if (statusEl) statusEl.innerText = `QR v${Math.round((built.n - 17) / 4)} · EC ${built.level} · verifying…`;
             try {
                 const reader = new ZXing.BrowserMultiFormatReader(makeQrHints());
@@ -2476,6 +2248,7 @@ function doPost(e) {
 
         function downloadTicketQrPng() {
             if (!currentQrCanvas) return;
+            // upscale x2 with no smoothing so the PNG stays razor sharp
             const out = document.createElement('canvas');
             out.width = currentQrCanvas.width * 2; out.height = currentQrCanvas.height * 2;
             const c = out.getContext('2d'); c.imageSmoothingEnabled = false;
@@ -2545,6 +2318,301 @@ function doPost(e) {
 
         function closeTicketModal() { document.getElementById('ticket-modal').classList.add('hidden'); }
 
+        // ===== Dashboard & Statement of Account =====
+        let stmtCfg = null, stmtReady = false, stmtLastData = null;
+        const STMT_KEY = 'ullswater_stmt_cfg';
+        const escH = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const fmtMoney = n => (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const fmtDiff = n => (n > 0 ? '+' : n < 0 ? '−' : '') + fmtMoney(Math.abs(n));
+        const fmtDate = s => { if (!s) return ''; const d = new Date(s + 'T00:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); };
+
+        const sheetMatch = l => { const s = (stmtCfg && stmtCfg.sheetId) || '__ALL__'; return s === '__ALL__' || l.formId === s || (!forms.find(f => f.id === l.formId) && (forms.find(f => f.id === s) || {}).name === l.formName); };
+        function scopeFields() { const s = (stmtCfg && stmtCfg.sheetId) || '__ALL__'; const f = forms.find(x => x.id === s); return f ? (f.fields || []) : allFormFields(); }
+        function fillSheetSelects() {
+            const cur = (stmtCfg && stmtCfg.sheetId) || '__ALL__';
+            const html = `<option value="__ALL__">All Sheets (${logs.length})</option>` + forms.map(f => `<option value="${escH(f.id)}">${escH(f.name)} (${logs.filter(l => l.formId === f.id).length})</option>`).join('');
+            ['ld-sheet', 'stmt-sheet'].forEach(id => { const el = document.getElementById(id); if (el) { el.innerHTML = html; el.value = forms.find(f => f.id === cur) ? cur : '__ALL__'; } });
+        }
+        function setSheetSelection(id) {
+            if (!stmtCfg) loadStmtCfg();
+            stmtCfg.sheetId = id || '__ALL__';
+            ['unitField','amountField','dateField','refField','qtyField','rateField','desc','sub'].forEach(k => delete stmtCfg[k]);   // re-detect for the chosen sheet
+            try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
+            loadStmtCfg();
+            try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
+            const u = document.getElementById('ld-unit'); if (u) u.value = '__ALL__';
+            if (stmtReady) { initStatementTab(); const su = document.getElementById('stmt-unit'); if (su) su.value = '__ALL__'; renderStatement(); }
+            renderLedgerTable();
+        }
+        function allFormFields() { const m = new Map(); forms.forEach(f => (f.fields || []).forEach(fl => { if (!m.has(fl.label)) m.set(fl.label, fl); })); return [...m.values()]; }
+
+        function loadStmtCfg() {
+            let c = {};
+            try { c = JSON.parse(localStorage.getItem(STMT_KEY)) || {}; } catch (e) {}
+            stmtCfg = c; const fields = scopeFields();
+            if (!c.unitField || !fields.find(f => f.label === c.unitField)) {
+                const g = fields.find(f => /^dt\b|unit|asset|truck|plate/i.test(f.label)) || fields.find(f => f.type === 'dropdown') || fields[0];
+                c.unitField = g ? g.label : '';
+            }
+            if (!c.amountField || !fields.find(f => f.label === c.amountField)) {
+                const g = fields.find(f => /amount/i.test(f.label)) || fields.find(f => f.type === 'computation') || fields.find(f => f.type === 'numbers');
+                c.amountField = g ? g.label : '';
+            }
+            const byLabel = l => fields.find(f => f.label === l);
+            const keep = k => c[k] === '' || (c[k] && byLabel(c[k]));            // '' = deliberately "None"
+            const find = re => { const g = fields.find(f => re.test(f.label)); return g ? g.label : ''; };
+            if (!keep('dateField')) { const g = fields.find(f => f.type === 'date'); c.dateField = g ? g.label : ''; }
+            if (!keep('refField')) c.refField = find(/ticket|ref|\bno\b|number/i);
+            if (!keep('qtyField')) c.qtyField = find(/capacity|qty|quantity|volume|load/i);
+            if (!keep('rateField')) c.rateField = find(/rate|price/i);
+            c.desc = (Array.isArray(c.desc) ? c.desc : null);
+            if (!c.desc || c.desc.some(x => x && !byLabel(x))) c.desc = [find(/^activity$/i), find(/^material$/i), ''];
+            c.sub = (Array.isArray(c.sub) ? c.sub : null);
+            if (!c.sub || c.sub.some(x => x && !byLabel(x))) c.sub = [find(/source/i), find(/dump|destination/i)];
+            while (c.desc.length < 3) c.desc.push(''); while (c.sub.length < 2) c.sub.push('');
+            c.targets = c.targets || {};
+            stmtCfg = c;
+        }
+        function resetStmtMapping() {
+            ['unitField','amountField','dateField','refField','qtyField','rateField','desc','sub'].forEach(k => delete stmtCfg[k]);
+            try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
+            initStatementTab();
+        }
+        function saveStmtCfg() {
+            if (!stmtCfg) return;
+            const v = id => (document.getElementById(id) || {}).value || '';
+            Object.assign(stmtCfg, { billedTo: v('stmt-billed-to'), project: v('stmt-project'), remarks: v('stmt-remarks'),
+                revName: v('stmt-rev-name'), revRole: v('stmt-rev-role'), appName: v('stmt-app-name'), appRole: v('stmt-app-role'), verName: v('stmt-ver-name'), verRole: v('stmt-ver-role') });
+            try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
+        }
+
+        function initStatementTab() {
+            loadStmtCfg();
+            const fields = scopeFields(); fillSheetSelects();
+            const fill = (id, list, sel) => { document.getElementById(id).innerHTML = list.map(f => `<option value="${escH(f.label)}" ${f.label === sel ? 'selected' : ''}>${escH(f.label)}</option>`).join(''); };
+            fill('stmt-unit-field', fields, stmtCfg.unitField);
+            fill('stmt-amount-field', fields.filter(f => ['computation', 'numbers', 'number'].includes(f.type) || f.label === stmtCfg.amountField), stmtCfg.amountField);
+            const fillOpt = (id, list, sel) => { document.getElementById(id).innerHTML = `<option value="">— None —</option>` + list.map(f => `<option value="${escH(f.label)}" ${f.label === sel ? 'selected' : ''}>${escH(f.label)}</option>`).join(''); };
+            const numeric = fields.filter(f => ['computation', 'numbers', 'number'].includes(f.type));
+            fillOpt('stmt-date-field', fields.filter(f => f.type === 'date'), stmtCfg.dateField);
+            fillOpt('stmt-ref-field', fields, stmtCfg.refField);
+            fillOpt('stmt-qty-field', fields, stmtCfg.qtyField);
+            fillOpt('stmt-rate-field', fields, stmtCfg.rateField);
+            [1, 2, 3].forEach(i => fillOpt('stmt-desc' + i + '-field', fields, stmtCfg.desc[i - 1]));
+            [1, 2].forEach(i => fillOpt('stmt-sub' + i + '-field', fields, stmtCfg.sub[i - 1]));
+            const set = (id, v) => { const el = document.getElementById(id); if (el && !stmtReady) el.value = v || ''; };
+            set('stmt-billed-to', stmtCfg.billedTo); set('stmt-project', stmtCfg.project); set('stmt-remarks', stmtCfg.remarks);
+            set('stmt-rev-name', stmtCfg.revName); set('stmt-rev-role', stmtCfg.revRole); set('stmt-app-name', stmtCfg.appName); set('stmt-app-role', stmtCfg.appRole); set('stmt-ver-name', stmtCfg.verName); set('stmt-ver-role', stmtCfg.verRole);
+            if (!stmtReady) { setStmtRange('all', true); stmtReady = true; }
+            renderStatement();
+        }
+
+        function onStmtFieldChange() {
+            stmtCfg.unitField = document.getElementById('stmt-unit-field').value;
+            stmtCfg.amountField = document.getElementById('stmt-amount-field').value;
+            const gv = id => document.getElementById(id).value;
+            stmtCfg.dateField = gv('stmt-date-field'); stmtCfg.refField = gv('stmt-ref-field');
+            stmtCfg.qtyField = gv('stmt-qty-field'); stmtCfg.rateField = gv('stmt-rate-field');
+            stmtCfg.desc = [gv('stmt-desc1-field'), gv('stmt-desc2-field'), gv('stmt-desc3-field')];
+            stmtCfg.sub = [gv('stmt-sub1-field'), gv('stmt-sub2-field')];
+            document.getElementById('stmt-unit').value = '__ALL__';
+            saveStmtCfg(); renderStatement();
+        }
+
+        function getLogDate(log) {
+            const form = forms.find(f => f.id === log.formId);
+            const mapped = stmtCfg && stmtCfg.dateField;
+            const df = mapped ? { label: mapped } : (form && (form.fields || []).find(f => f.type === 'date'));
+            const v = df && log.data ? String(log.data[df.label] || '') : '';
+            if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+            return String(log.timestamp || '').slice(0, 10);
+        }
+        const getLogAmount = log => { const v = log.data ? log.data[stmtCfg.amountField] : 0; const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
+        const getLogUnit = log => { const v = log.data ? log.data[stmtCfg.unitField] : ''; return String(v == null ? '' : v).trim() || '(Unassigned)'; };
+        const pad2 = n => String(n).padStart(2, '0');
+        const isoDate = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+        function setStmtRange(kind, silent) {
+            const now = new Date(); let from = '', to = '';
+            if (kind === 'month') { from = isoDate(new Date(now.getFullYear(), now.getMonth(), 1)); to = isoDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)); }
+            else if (kind === 'lastmonth') { from = isoDate(new Date(now.getFullYear(), now.getMonth() - 1, 1)); to = isoDate(new Date(now.getFullYear(), now.getMonth(), 0)); }
+            else { const ds = logs.map(getLogDate).filter(Boolean).sort(); from = ds[0] || isoDate(new Date(now.getFullYear(), now.getMonth(), 1)); to = ds[ds.length - 1] || isoDate(now); }
+            document.getElementById('stmt-from').value = from; document.getElementById('stmt-to').value = to;
+            if (!silent) renderStatement();
+        }
+
+        function computeStatement() {
+            const from = document.getElementById('stmt-from').value, to = document.getElementById('stmt-to').value;
+            const sel = document.getElementById('stmt-unit').value || '__ALL__';
+            let voided = 0;
+            const inRange = logs.filter(l => { const d = getLogDate(l); return sheetMatch(l) && (!from || d >= from) && (!to || d <= to); });
+            const live = inRange.filter(l => { if (l.status === 'VOID') { voided++; return false; } return true; });
+            const units = {};
+            live.forEach(l => { const u = getLogUnit(l); (units[u] = units[u] || { unit: u, rows: [], amount: 0 }); units[u].rows.push(l); units[u].amount += getLogAmount(l); });
+            const unitList = Object.values(units).sort((a, b) => a.unit.localeCompare(b.unit, undefined, { numeric: true }));
+            const chosen = sel === '__ALL__' ? unitList : unitList.filter(u => u.unit === sel);
+            chosen.forEach(u => { u.rows.sort((a, b) => getLogDate(a).localeCompare(getLogDate(b)) || String(a.id).localeCompare(String(b.id))); u.target = stmtCfg.targets[u.unit]; u.hasTarget = u.target !== undefined && u.target !== '' && !isNaN(parseFloat(u.target)); u.diff = u.hasTarget ? u.amount - parseFloat(u.target) : null; });
+            const tx = chosen.reduce((s, u) => s + u.rows.length, 0), amt = chosen.reduce((s, u) => s + u.amount, 0);
+            const tgtUnits = chosen.filter(u => u.hasTarget);
+            const tgt = tgtUnits.reduce((s, u) => s + parseFloat(u.target), 0);
+            const diff = tgtUnits.length ? tgtUnits.reduce((s, u) => s + u.diff, 0) : null;
+            return { from, to, sel, unitList, chosen, tx, amt, tgt, diff, voided, hasTarget: tgtUnits.length > 0 };
+        }
+
+        function renderStatement() {
+            if (!stmtCfg) return;
+            const selEl = document.getElementById('stmt-unit');
+            const prev = selEl.value || '__ALL__';
+            const base = computeStatementUnitsOnly();
+            selEl.innerHTML = `<option value="__ALL__">All Asset Units</option>` + base.map(u => `<option value="${escH(u)}">${escH(stmtCfg.unitField)} ${escH(u)}</option>`).join('');
+            selEl.value = base.includes(prev) || prev === '__ALL__' ? prev : '__ALL__';
+            const S = computeStatement(); stmtLastData = S;
+
+            const amtL = stmtCfg.amountField || 'Amount', unitL = stmtCfg.unitField || 'Asset Unit';
+            const setT = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+            setT('stmt-th-unit', unitL); setT('stmt-th-amt', 'Actual ' + amtL); setT('stmt-title-units', amtL + ' by ' + unitL);
+            // KPIs
+            const kpi = (label, val, icon, color) => `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-4"><div class="flex items-center justify-between"><span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">${label}</span><i class="fa-solid ${icon} ${color}"></i></div><div class="text-xl font-bold text-white mt-1.5 font-mono truncate">${val}</div></div>`;
+            const diffColor = S.diff == null ? 'text-slate-400' : S.diff > 0 ? 'text-amber-400' : 'text-emerald-400';
+            document.getElementById('stmt-kpis').innerHTML =
+                kpi('Total Amount', fmtMoney(S.amt), 'fa-coins', 'text-emerald-400') +
+                kpi('Transactions', S.tx.toLocaleString(), 'fa-receipt', 'text-blue-400') +
+                kpi('Asset Units', S.chosen.length, 'fa-truck', 'text-amber-400') +
+                `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-4"><div class="flex items-center justify-between"><span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Difference vs Target</span><i class="fa-solid fa-scale-balanced ${diffColor}"></i></div><div class="text-xl font-bold mt-1.5 font-mono truncate ${diffColor}">${S.diff == null ? '—' : fmtDiff(S.diff)}</div></div>`;
+
+            // Unit bars
+            const max = Math.max(1, ...S.chosen.map(u => u.amount));
+            document.getElementById('stmt-chart-units').innerHTML = S.chosen.length ? S.chosen.map(u => `<div><div class="flex justify-between text-[11px] text-slate-300 mb-0.5"><span>${escH(u.unit)}</span><span class="font-mono">${fmtMoney(u.amount)}</span></div><div class="h-2.5 bg-slate-800 rounded-full overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width:${Math.max(2, u.amount / max * 100)}%"></div></div></div>`).join('') : '<p class="text-xs text-slate-500">No transactions in this coverage.</p>';
+
+            // Daily trend
+            const days = {}; S.chosen.forEach(u => u.rows.forEach(l => { const d = getLogDate(l); days[d] = (days[d] || 0) + getLogAmount(l); }));
+            const dk = Object.keys(days).sort(), dmax = Math.max(1, ...Object.values(days));
+            document.getElementById('stmt-chart-days').innerHTML = dk.length ? dk.map(d => `<div class="flex flex-col items-center justify-end h-full min-w-[22px] flex-1" title="${fmtDate(d)}: ${fmtMoney(days[d])}"><div class="w-full bg-emerald-500/80 rounded-t" style="height:${Math.max(3, days[d] / dmax * 100)}%"></div><span class="text-[8px] text-slate-500 mt-1">${d.slice(8)}</span></div>`).join('') : '<p class="text-xs text-slate-500">No data.</p>';
+
+            // Unit table (editable targets)
+            document.getElementById('stmt-unit-table').innerHTML = S.chosen.length ? S.chosen.map(u => `<tr class="hover:bg-slate-800/40"><td class="p-3 text-blue-300 font-bold cursor-pointer" onclick="document.getElementById('stmt-unit').value='${escH(u.unit).replace(/'/g, "\\'")}';renderStatement()">${escH(u.unit)}</td><td class="p-3 text-right">${u.rows.length}</td><td class="p-3 text-right text-emerald-300">${fmtMoney(u.amount)}</td><td class="p-3 text-right"><input type="number" step="0.01" value="${u.hasTarget ? u.target : ''}" placeholder="0.00" onchange="setUnitTarget('${escH(u.unit).replace(/'/g, "\\'")}', this.value)" class="w-32 bg-slate-950 border border-slate-700 text-white text-xs text-right rounded-lg px-2 py-1.5"></td><td class="p-3 text-right font-bold ${u.diff == null ? 'text-slate-500' : u.diff > 0 ? 'text-amber-400' : 'text-emerald-400'}">${u.diff == null ? '—' : fmtDiff(u.diff)}</td></tr>`).join('') : '<tr><td colspan="5" class="p-4 text-slate-500">No transactions in this coverage.</td></tr>';
+
+            document.getElementById('stmt-preview').innerHTML = buildStatementDocHtml(S, false);
+        }
+
+        function computeStatementUnitsOnly() {
+            const from = document.getElementById('stmt-from').value, to = document.getElementById('stmt-to').value;
+            const set = new Set();
+            logs.forEach(l => { if (l.status === 'VOID' || !sheetMatch(l)) return; const d = getLogDate(l); if ((!from || d >= from) && (!to || d <= to)) set.add(getLogUnit(l)); });
+            return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        }
+
+        function setUnitTarget(unit, val) {
+            if (val === '') delete stmtCfg.targets[unit]; else stmtCfg.targets[unit] = val;
+            saveStmtCfg(); renderStatement();
+        }
+
+        function buildStatementDocHtml(S, forPrint) {
+            const cur = (users.find(u => u.username === activeUser) || {}).fullname || activeUser;
+            const stmtNo = 'SOA-' + (S.to || isoDate(new Date())).replace(/-/g, '') + '-' + (S.sel === '__ALL__' ? 'ALL' : S.sel.replace(/[^A-Za-z0-9]/g, ''));
+            const unitLabel = S.sel === '__ALL__' ? 'All Asset Units' : `${stmtCfg.unitField} ${S.sel}`;
+            const c = stmtCfg;
+            const sheetName = (forms.find(f => f.id === c.sheetId) || {}).name || 'All Sheets';
+            const sig = (title, name, role) => `<div class="sig"><div class="sigline">${escH(name) || '&nbsp;'}</div><div class="signame">${escH(title)}</div><div class="sigrole">${escH(role) || '&nbsp;'}</div><div class="sigdate">Date: ____________</div></div>`;
+            const col = n => `<td class="num">${n}</td>`;
+            const unitL = c.unitField || 'Asset Unit', amtL = c.amountField || 'Amount';
+            const descF = (c.desc || []).filter(Boolean), subF = (c.sub || []).filter(Boolean);
+            const numOrRaw = v => { if (v == null || v === '') return ''; const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? escH(v) : fmtMoney(n); };
+            // al: l = left, c = centre, r = right. Widths are %, the description column takes the remainder.
+            const cols = [];
+            cols.push({ h: c.dateField || 'Date', w: 11, al: 'c', cell: l => fmtDate(getLogDate(l)) });
+            if (c.refField) cols.push({ h: c.refField, w: 15, al: 'l', cell: l => `<span class="strong">${escH((l.data || {})[c.refField] || '')}</span><div class="sub">${escH(l.id)}</div>` });
+            if (descF.length || subF.length) cols.push({ h: descF.join(' / ') || subF.join(' → '), w: 0, al: 'l', cell: l => {
+                const d = l.data || {};
+                const main = descF.map(k => d[k]).filter(v => v != null && v !== '').join(' – ');
+                const sub = subF.map(k => d[k]).filter(v => v != null && v !== '').join(' → ');
+                return `${escH(main)}${sub ? `<div class="sub">${escH(sub)}</div>` : ''}`;
+            } });
+            if (c.qtyField) cols.push({ h: c.qtyField, w: 9, al: 'r', cell: l => escH((l.data || {})[c.qtyField] || '') });
+            if (c.rateField) cols.push({ h: c.rateField, w: 11, al: 'r', cell: l => numOrRaw((l.data || {})[c.rateField]) });
+            cols.push({ h: amtL, w: 14, al: 'r', cell: l => `<span class="strong">${fmtMoney(getLogAmount(l))}</span>` });
+            const nC = cols.length;
+            const summaryRows = S.chosen.map(u => `<tr><td>${escH(u.unit)}</td>${col(u.rows.length)}${col(fmtMoney(u.amount))}${col(u.hasTarget ? fmtMoney(u.target) : '—')}${col(u.diff == null ? '—' : fmtDiff(u.diff))}</tr>`).join('');
+            const detail = S.chosen.map(u => {
+                const rows = u.rows.map(l => `<tr>${cols.map(k => `<td class="a-${k.al}">${k.cell(l)}</td>`).join('')}</tr>`).join('');
+                return `<tr class="grp"><td colspan="${nC}">${escH(unitL)}: ${escH(u.unit)}</td></tr>${rows}<tr class="subtot"><td colspan="${nC - 1}" class="a-r">Subtotal – ${escH(u.unit)} (${u.rows.length} transaction${u.rows.length === 1 ? '' : 's'})</td><td class="a-r">${fmtMoney(u.amount)}</td></tr>`;
+            }).join('');
+            const detailHead = cols.map(k => `<th class="a-${k.al}">${escH(k.h)}</th>`).join('');
+            const detailColgroup = '<colgroup>' + cols.map(k => k.w ? `<col style="width:${k.w}%">` : '<col>').join('') + '</colgroup>';
+            const summaryColgroup = '<colgroup><col><col style="width:14%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>';
+            return `
+<div class="soa">
+  <div class="hd"><div><div class="co">ULLSWATER CORPORATION</div><div class="cosub">Fleet Operations &amp; Hauling</div></div><div class="ttl"><div class="t1">STATEMENT OF ACCOUNT</div><div class="t2">${escH(stmtNo)}</div></div></div>
+  <table class="meta"><tr><td><b>${escH(unitL)}</b></td><td>${escH(unitLabel)}</td><td><b>Coverage</b></td><td>${S.from ? fmtDate(S.from) : 'Start'} – ${S.to ? fmtDate(S.to) : 'Present'}</td></tr>
+  <tr><td><b>Billed To</b></td><td>${escH(c.billedTo) || '—'}</td><td><b>Date Issued</b></td><td>${fmtDate(isoDate(new Date()))}</td></tr>
+  <tr><td><b>Project / Site</b></td><td>${escH(c.project) || '—'}</td><td><b>Prepared By</b></td><td>${escH(cur)}</td></tr>
+  <tr><td><b>Data Entry Sheet</b></td><td>${escH(sheetName)}</td><td><b>Mapped Unit Field</b></td><td>${escH(stmtCfg.unitField)}</td></tr></table>
+
+  <div class="sec">Account Summary</div>
+  <table class="grid summary">${summaryColgroup}<thead><tr><th>${escH(unitL)}</th><th class="num">Transactions</th><th class="num">Actual ${escH(amtL)}</th><th class="num">Target Amount</th><th class="num">Difference</th></tr></thead><tbody>${summaryRows || '<tr><td colspan="5" class="empty">No transactions in this coverage.</td></tr>'}</tbody>
+  <tfoot><tr><td>TOTAL</td>${col(S.tx)}${col(fmtMoney(S.amt))}${col(S.hasTarget ? fmtMoney(S.tgt) : '—')}${col(S.diff == null ? '—' : fmtDiff(S.diff))}</tr></tfoot></table>
+  <div class="note">Difference = Actual Amount − Target Amount. A positive figure is over target; a negative figure is under target.${S.voided ? ` ${S.voided} voided ticket${S.voided === 1 ? '' : 's'} excluded.` : ''}</div>
+
+  <div class="sec">Transaction Details</div>
+  <table class="grid detail">${detailColgroup}<thead><tr>${detailHead}</tr></thead><tbody>${detail || `<tr><td colspan="${nC}" class="empty">No transactions in this coverage.</td></tr>`}</tbody>
+  <tfoot><tr><td colspan="${nC - 1}" class="a-r">GRAND TOTAL</td><td class="a-r">${fmtMoney(S.amt)}</td></tr></tfoot></table>
+
+  ${c.remarks ? `<div class="sec">Remarks</div><div class="remarks">${escH(c.remarks).replace(/\n/g, '<br>')}</div>` : ''}
+
+  <div class="sigs">${sig('Reviewed by', c.revName, c.revRole)}${sig('Approved by', c.appName, c.appRole)}${sig('Verified by', c.verName, c.verRole)}</div>
+  <div class="foot">System-generated statement · Ullswater Fleet Hub · ${getLocalTimestamp()}</div>
+</div>`;
+        }
+
+        const STMT_CSS = `.soa{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:11px;padding:28px 32px;background:#fff}
+.soa .hd{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #0f2a4a;padding-bottom:10px;margin-bottom:12px}
+.soa .co{font-size:20px;font-weight:800;color:#0f2a4a;letter-spacing:1px}.soa .cosub{font-size:10px;color:#555;margin-top:2px}
+.soa .ttl{text-align:right}.soa .t1{font-size:16px;font-weight:800;letter-spacing:2px;color:#0f2a4a}.soa .t2{font-size:10px;color:#555;margin-top:2px;font-family:monospace}
+.soa table{width:100%;border-collapse:collapse}.soa .meta td{padding:3px 6px;border:1px solid #cfd6df;font-size:10.5px}.soa .meta td:nth-child(odd){background:#f1f4f8;width:15%}
+.soa .sec{margin:16px 0 6px;font-weight:800;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#0f2a4a;border-left:4px solid #0f2a4a;padding-left:6px}
+.soa .grid{table-layout:fixed;border:1px solid #0f2a4a}
+.soa .grid th{background:#0f2a4a;color:#fff;text-align:left;padding:7px 8px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;line-height:1.25;vertical-align:middle;overflow-wrap:anywhere;border-right:1px solid rgba(255,255,255,.18)}
+.soa .grid th:last-child{border-right:0}
+.soa .grid td{padding:5px 8px;border-bottom:1px solid #dde3ea;border-right:1px solid #eef1f5;vertical-align:middle;line-height:1.35;overflow-wrap:anywhere}
+.soa .grid td:last-child{border-right:0}
+.soa .grid tbody tr:not(.grp):not(.subtot):nth-child(even) td{background:#f8fafc}
+.soa .a-l{text-align:left}.soa .a-c{text-align:center}.soa .a-r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.soa .grid th.a-r{white-space:normal}
+.soa .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.soa .grid th.num{text-align:right;white-space:normal}
+.soa .strong{font-weight:700;color:#0f2a4a}
+.soa .sub{font-size:8.5px;color:#7a8594;margin-top:1px;font-weight:400;white-space:normal}
+.soa thead{display:table-header-group}.soa tfoot{display:table-row-group}
+.soa .soa-wrap, .soa .grid{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.soa .grid th,.soa .grid td,.soa tfoot td,.soa .grp td,.soa .subtot td,.soa .meta td{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.soa .grp{page-break-after:avoid}.soa .grp td{background:#e8eef6;font-weight:700;color:#0f2a4a;border-top:1px solid #9aa8ba;padding:6px 8px;letter-spacing:.3px}.soa .subtot td{background:#f1f4f8;font-weight:700;border-top:1px solid #9aa8ba;border-bottom:2px solid #c3cddb}
+.soa tfoot td{background:#0f2a4a;color:#fff;font-weight:800;padding:8px;letter-spacing:.4px}.soa .empty{text-align:center;color:#888;padding:14px}
+.soa .note{font-size:9px;color:#666;margin-top:5px;font-style:italic}.soa .remarks{border:1px solid #cfd6df;padding:6px 8px;min-height:24px}
+.soa .sigs{display:flex;gap:28px;margin-top:46px;page-break-inside:avoid}.soa .sig{flex:1;text-align:center}
+.soa .sigline{border-bottom:1px solid #111;height:30px;font-weight:700;display:flex;align-items:flex-end;justify-content:center;padding-bottom:2px}
+.soa .signame{font-weight:800;margin-top:4px;text-transform:uppercase;font-size:10px;letter-spacing:1px}.soa .sigrole{font-size:9.5px;color:#444;min-height:12px}.soa .sigdate{font-size:9px;color:#666;margin-top:10px}
+.soa .foot{margin-top:22px;border-top:1px solid #ccc;padding-top:5px;text-align:center;font-size:8.5px;color:#888}
+.soa tr{page-break-inside:avoid}`;
+
+        // inject the same stylesheet into the live preview
+        (function () { const s = document.createElement('style'); s.textContent = STMT_CSS; document.head.appendChild(s); })();
+
+        function printStatement() {
+            if (!stmtLastData) renderStatement();
+            const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Statement of Account</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>@page{size:A4;margin:10mm}body{margin:0;background:#fff}${STMT_CSS}.soa{padding:0}</style></head><body>${buildStatementDocHtml(stmtLastData, true)}<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script></body></html>`;
+            let w = null;
+            try { w = window.open('', '_blank'); } catch (e) { w = null; }
+            if (w && w.document) { w.document.open(); w.document.write(html); w.document.close(); return; }
+            try {
+                const old = document.getElementById('print-frame'); if (old) old.remove();
+                const f = document.createElement('iframe'); f.id = 'print-frame';
+                f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;';
+                document.body.appendChild(f);
+                const d = f.contentWindow.document; d.open(); d.write(html.replace(/<script>[\s\S]*?<\/script>/, '')); d.close();
+                setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { window.print(); } }, 600);
+            } catch (e) { showToast('Allow pop-ups for this page, then tap Print again', 'error'); }
+        }
+
+        // ===== Void / Delete =====
         let currentTicketModalId = null;
 
         function refreshTicketVoidUI(log) {
@@ -2558,7 +2626,6 @@ function doPost(e) {
         function toggleVoidEntry(ticketId) {
             const log = logs.find(l => l.id === ticketId);
             if (!log) return;
-            if (log.formId && !canEditForm(log.formId)) { showToast('View only: no edit permission for this form', 'error'); return; }
             const makeVoid = log.status !== 'VOID';
             const msg = makeVoid
                 ? `Void ticket ${ticketId}? It stays in the ledger marked VOID.`
@@ -2567,21 +2634,17 @@ function doPost(e) {
             log.status = makeVoid ? 'VOID' : 'VALID';
             log.voidedBy = makeVoid ? (activeUser || 'admin') : '';
             log.voidedAt = makeVoid ? getLocalTimestamp() : '';
-            log._dirty = true;
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
             renderLedgerTable();
             if (currentTicketModalId === ticketId) refreshTicketVoidUI(log);
-            const form = forms.find(f => f.id === log.formId);
-            postLogToGoogleSheet(log, log.formName, form ? form.endpoint : '');
+            postLogToGoogleSheet(log, log.formName);
             showToast(makeVoid ? `Ticket ${ticketId} voided` : `Ticket ${ticketId} restored`, 'success');
         }
 
         function deleteLedgerEntry(ticketId) {
             const log = logs.find(l => l.id === ticketId);
             if (!log) return;
-            if (log.formId && !canEditForm(log.formId)) { showToast('View only: no edit permission for this form', 'error'); return; }
             if (!confirm(`Permanently delete ticket ${ticketId}? This cannot be undone.\n(Tip: use Void to keep a record.)`)) return;
-            recentlyDeleted[ticketId] = Date.now() + 120000;
             logs = logs.filter(l => l.id !== ticketId);
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
             renderLedgerTable();
@@ -2600,17 +2663,17 @@ function doPost(e) {
 
         function postDeleteToGoogleSheet(logEntry) {
             const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
-            const form = forms.find(f => f.id === logEntry.formId);
-            const targetUrl = form && form.endpoint && form.endpoint.startsWith('http') ? form.endpoint : settings.webappId;
-            if (targetUrl && targetUrl.startsWith('http')) {
-                fetch(targetUrl, {
+            if (settings.webappId && settings.webappId.startsWith('http')) {
+                fetch(settings.webappId, {
                     method: 'POST', mode: 'no-cors',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: getSyncToken(), action: 'delete', id: logEntry.id, targetTab: logEntry.formName, formName: logEntry.formName })
+                    body: JSON.stringify({ action: 'delete', id: logEntry.id, targetTab: logEntry.formName, formName: logEntry.formName })
                 }).catch(() => {});
             }
         }
-
+        // ===== Mobile-safe printing (Android Chrome / iPhone Safari) =====
+        // Builds a clean standalone ticket page and prints THAT, instead of
+        // window.print() on the app (the old visibility trick prints blank on phones).
         function escHtml(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
         function buildTicketPrintHtml(layout) {
@@ -2665,12 +2728,14 @@ function doPost(e) {
 
         function printCurrentTicket() {
             const html = buildTicketPrintHtml(currentPrintLayout);
+            // 1) New tab/window (works on Android Chrome + iPhone Safari; user tap = allowed popup)
             let w = null;
             try { w = window.open('', '_blank'); } catch (e) { w = null; }
             if (w && w.document) {
                 w.document.open(); w.document.write(html); w.document.close();
                 return;
             }
+            // 2) Hidden iframe fallback if popups are blocked
             try {
                 const old = document.getElementById('print-frame'); if (old) old.remove();
                 const f = document.createElement('iframe');
@@ -2682,6 +2747,7 @@ function doPost(e) {
                 setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { window.print(); } }, 600);
                 return;
             } catch (e) {}
+            // 3) Last resort
             window.print();
             showToast('If nothing printed, allow pop-ups for this page and tap Print again', 'error');
         }
@@ -2690,7 +2756,6 @@ function doPost(e) {
             currentEditingTicketId = ticketId;
             const log = logs.find(l => l.id === ticketId);
             if(!log) return;
-            if (log.formId && !canEditForm(log.formId)) { showToast('View only: no edit permission for this form', 'error'); return; }
             const container = document.getElementById('edit-modal-fields-container');
             container.innerHTML = Object.entries(log.data || {}).map(([k, v]) => `
                 <div><label class="block text-xs font-medium text-slate-400 uppercase mb-1">${k}</label><input type="text" id="edit_field_${k}" value="${v}" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5"></div>
@@ -2706,11 +2771,9 @@ function doPost(e) {
                 if(el) log.data[k] = el.value;
             });
             if (log.data && log.data[SCAN_REF_LABEL] !== undefined) log.sourceTicket = log.data[SCAN_REF_LABEL];
-            log._dirty = true;
             localStorage.setItem('ullswater_logs', JSON.stringify(logs));
             renderLedgerTable();
-            const form = forms.find(f => f.id === log.formId);
-            postLogToGoogleSheet(log, log.formName, form ? form.endpoint : '');
+            postLogToGoogleSheet(log, log.formName);
             closeEditModal();
         }
 
@@ -2771,6 +2834,7 @@ function doPost(e) {
                 let map = {};
                 headers.forEach((h, i) => map[h] = values[i] || '');
 
+                // Keep a reference to the ticket that was scanned
                 const scannedTicket = map["Ticket_ID"] || '';
                 if (scannedTicket) {
                     const dup = logs.filter(l => l.sourceTicket === scannedTicket).length;
@@ -2791,10 +2855,7 @@ function doPost(e) {
                 if (form) {
                     form.fields.forEach(field => {
                         const el = document.getElementById(`field_${field.id}`);
-                        if (el && map[field.label] !== undefined) {
-                            if (field.type === 'checkbox') el.checked = (map[field.label] === 'YES' || map[field.label] === 'true');
-                            else el.value = map[field.label];
-                        }
+                        if (el && map[field.label] !== undefined) el.value = map[field.label];
                     });
                 }
                 triggerFieldCalculations();
@@ -2815,19 +2876,6 @@ function doPost(e) {
 
         function selectFormForDesign(formId) { selectedDesignFormId = formId; renderDesignerFormList(); renderFormEditorWorkspace(); }
 
-        function handleDragStart(idx) { draggedFieldIndex = idx; }
-        function handleDragOver(e) { e.preventDefault(); }
-        function handleDrop(targetIdx) {
-            if (draggedFieldIndex === null || draggedFieldIndex === targetIdx) return;
-            const form = forms.find(f => f.id === selectedDesignFormId);
-            if (!form) return;
-            const movedItem = form.fields.splice(draggedFieldIndex, 1)[0];
-            form.fields.splice(targetIdx, 0, movedItem);
-            draggedFieldIndex = null;
-            renderFormEditorWorkspace();
-            saveAllFormDesigns();
-        }
-
         function renderFormEditorWorkspace() {
             const container = document.getElementById('form-editor-workspace');
             const form = forms.find(f => f.id === selectedDesignFormId);
@@ -2835,77 +2883,31 @@ function doPost(e) {
 
             container.innerHTML = `
                 <div class="space-y-4">
-                    <div class="space-y-3 pb-3 border-b border-slate-800">
-                        <div>
-                            <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Form Title</label>
-                            <input type="text" value="${form.name}" onchange="updateFormName('${form.id}', this.value)" class="w-full bg-slate-950 border border-slate-700 text-white font-bold text-base rounded-xl px-3.5 py-2">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Custom Endpoint URL (Optional Google Script Receiver)</label>
-                            <input type="text" value="${form.endpoint || ''}" placeholder="https://script.google.com/macros/s/.../exec" onchange="updateFormEndpoint('${form.id}', this.value)" class="w-full bg-slate-950 border border-slate-700 text-cyan-300 font-mono text-xs rounded-xl px-3.5 py-2">
-                        </div>
-                        <div class="flex items-center justify-between pt-2">
-                            <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Field List (${form.fields.length})</span>
-                            <button onclick="addFieldToForm('${form.id}')" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow"><i class="fa-solid fa-plus"></i> Add Field</button>
-                        </div>
+                    <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                        <input type="text" value="${form.name}" onchange="updateFormName('${form.id}', this.value)" class="bg-transparent text-white font-bold text-lg focus:outline-none">
+                        <button onclick="addFieldToForm('${form.id}')" class="bg-blue-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl"><i class="fa-solid fa-plus"></i> Add Field</button>
                     </div>
-
-                    <div id="designer-fields-container" class="space-y-3">
                     ${form.fields.map((field, idx) => `
-                        <div draggable="true" ondragstart="handleDragStart(${idx})" ondragover="handleDragOver(event)" ondrop="handleDrop(${idx})" class="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 space-y-3">
+                        <div class="bg-slate-950 border border-slate-800 rounded-2xl p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2">
-                                <div class="flex items-center gap-2 flex-1">
-                                    <i class="fa-solid fa-grip-vertical text-slate-600 drag-handle p-1"></i>
-                                    <input type="text" value="${field.label}" onchange="updateFieldProperty('${form.id}', '${field.id}', 'label', this.value)" class="bg-slate-900 border border-slate-700 text-white text-xs font-bold rounded-lg px-3 py-1.5 flex-1">
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    <select onchange="updateFieldProperty('${form.id}', '${field.id}', 'type', this.value)" class="bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5">
-                                        <option value="barcode" ${field.type==='barcode'?'selected':''}>Barcode</option>
-                                        <option value="nfc" ${field.type==='nfc'?'selected':''}>NFC Tag</option>
-                                        <option value="text_ocr" ${field.type==='text_ocr'?'selected':''}>Text/OCR</option>
-                                        <option value="numbers" ${field.type==='numbers'?'selected':''}>Number</option>
-                                        <option value="dropdown" ${field.type==='dropdown'?'selected':''}>List / Dropdown</option>
-                                        <option value="date" ${field.type==='date'?'selected':''}>Date</option>
-                                        <option value="time" ${field.type==='time'?'selected':''}>Time</option>
-                                        <option value="checkbox" ${field.type==='checkbox'?'selected':''}>Check Box</option>
-                                        <option value="image" ${field.type==='image'?'selected':''}>Image</option>
-                                        <option value="signature" ${field.type==='signature'?'selected':''}>Signature</option>
-                                        <option value="location" ${field.type==='location'?'selected':''}>Location</option>
-                                        <option value="datetime" ${field.type==='datetime'?'selected':''}>Date and Time</option>
-                                        <option value="static_text" ${field.type==='static_text'?'selected':''}>Static Text</option>
-                                        <option value="stopwatch" ${field.type==='stopwatch'?'selected':''}>Stop Watch</option>
-                                        <option value="computation" ${field.type==='computation'?'selected':''}>Computation</option>
-                                    </select>
-                                    <div class="flex items-center gap-1" title="Move field order">
-                                        <button type="button" onclick="moveFieldInForm('${form.id}', '${field.id}', -1)" ${idx===0?'disabled':''} class="bg-slate-900 border border-slate-700 text-amber-300 text-xs rounded-lg px-2 py-1.5 font-bold hover:bg-slate-800 ${idx===0?'opacity-30 cursor-not-allowed':''}" title="Move up"><i class="fa-solid fa-arrow-up"></i></button>
-                                        <button type="button" onclick="moveFieldInForm('${form.id}', '${field.id}', 1)" ${idx===form.fields.length-1?'disabled':''} class="bg-slate-900 border border-slate-700 text-amber-300 text-xs rounded-lg px-2 py-1.5 font-bold hover:bg-slate-800 ${idx===form.fields.length-1?'opacity-30 cursor-not-allowed':''}" title="Move down"><i class="fa-solid fa-arrow-down"></i></button>
-                                    </div>
-                                    ${(field.type !== 'static_text' && field.type !== 'computation') ? `<label class="flex items-center space-x-1 cursor-pointer bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded-lg" title="Make this field required on data entry">
-                                        <input type="checkbox" ${field.required ? 'checked' : ''} onchange="updateFieldProperty('${form.id}', '${field.id}', 'required', this.checked)" class="w-4 h-4 rounded border-slate-700 bg-slate-950 text-rose-500">
-                                        <span class="text-[10px] text-slate-400 uppercase font-semibold">Required</span>
-                                    </label>` : ''}
-                                    ${['static_text', 'computation', 'image', 'signature'].includes(field.type) ? '' : `<label class="flex items-center space-x-1 cursor-pointer bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded-lg" title="Remember the last value entered and pre-fill it next time">
-                                        <input type="checkbox" ${field.remember ? 'checked' : ''} onchange="updateFieldProperty('${form.id}', '${field.id}', 'remember', this.checked)" class="w-4 h-4 rounded border-slate-700 bg-slate-950 text-cyan-500">
-                                        <span class="text-[10px] text-slate-400 uppercase font-semibold">Remember</span>
-                                    </label>`}
-                                    <label class="flex items-center space-x-1 cursor-pointer bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded-lg" title="Hide field on data entry form">
-                                        <input type="checkbox" ${field.hidden ? 'checked' : ''} onchange="updateFieldProperty('${form.id}', '${field.id}', 'hidden', this.checked)" class="w-4 h-4 rounded border-slate-700 bg-slate-950 text-blue-600">
-                                        <span class="text-[10px] text-slate-400 uppercase font-semibold">Hide</span>
-                                    </label>
-                                    ${(field.type === 'dropdown' || field.type === 'list') ? `<button onclick="openDropdownManager('${form.id}', '${field.id}')" class="text-cyan-400 text-xs font-bold px-1"><i class="fa-solid fa-list"></i></button>` : ''}
-                                    <button onclick="removeFieldFromForm('${form.id}', '${field.id}')" class="text-rose-400 hover:text-rose-300 p-1"><i class="fa-solid fa-trash-can"></i></button>
-                                </div>
+                                <input type="text" value="${field.label}" onchange="updateFieldProperty('${form.id}', '${field.id}', 'label', this.value)" class="bg-slate-900 text-white text-sm rounded-lg px-3 py-1 flex-1">
+                                <select onchange="updateFieldProperty('${form.id}', '${field.id}', 'type', this.value)" class="bg-slate-900 text-white text-xs rounded-lg px-2 py-1">
+                                    <option value="text" ${field.type==='text'?'selected':''}>Text</option>
+                                    <option value="dropdown" ${field.type==='dropdown'?'selected':''}>Dropdown</option>
+                                    <option value="numbers" ${field.type==='numbers'?'selected':''}>Numbers</option>
+                                    <option value="computation" ${field.type==='computation'?'selected':''}>Computation</option>
+                                    <option value="date" ${field.type==='date'?'selected':''}>Date</option>
+                                </select>
+                                ${field.type === 'dropdown' ? `<button onclick="openDropdownManager('${form.id}', '${field.id}')" class="text-cyan-400 text-xs font-bold"><i class="fa-solid fa-list"></i> Options</button>` : ''}
+                                <button onclick="removeFieldFromForm('${form.id}', '${field.id}')" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button>
                             </div>
-                            ${field.type === 'computation' ? buildComputationBuilderHtml(form, field) : ''}
-                            ${field.type === 'static_text' ? `<input type="text" value="${field.staticContent || ''}" placeholder="Static content message..." onchange="updateFieldProperty('${form.id}', '${field.id}', 'staticContent', this.value)" class="w-full bg-slate-900 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-xl">` : ''}
+                            ${field.type === 'computation' ? `<input type="text" value="${field.formula || ''}" placeholder="Formula e.g. (f1)*(f2)" onchange="updateFieldFormula('${form.id}', '${field.id}', this.value)" class="w-full bg-slate-900 border border-slate-800 text-emerald-400 font-mono text-xs px-3 py-1 rounded">` : ''}
                         </div>
                     `).join('')}
-                    </div>
                 </div>`;
         }
 
         function updateFormName(id, name) { const f = forms.find(x => x.id === id); if(f) { f.name = name; renderDesignerFormList(); renderFormSelector(); } }
-        function updateFormEndpoint(id, endpoint) { const f = forms.find(x => x.id === id); if(f) { f.endpoint = endpoint; } }
         function updateFieldProperty(formId, fieldId, prop, val) {
             const form = forms.find(f => f.id === formId);
             const field = form ? form.fields.find(f => f.id === fieldId) : null;
@@ -2918,81 +2920,7 @@ function doPost(e) {
         }
         function addFieldToForm(formId) {
             const form = forms.find(f => f.id === formId);
-            if(form) { form.fields.push({ id: 'f_' + Math.random().toString(36).substring(2,7), label: 'New Field', type: 'text_ocr', hidden: false, column: 1 }); renderFormEditorWorkspace(); }
-        }
-        function getComputationSourceFields(form, field) {
-            return form.fields.filter(f => f.id !== field.id && ['numbers', 'dropdown', 'list', 'computation'].includes(f.type));
-        }
-        function formulaToReadable(form, formula) {
-            return String(formula || '').replace(/\b[a-zA-Z0-9_]+\b/g, m => {
-                const f = form.fields.find(x => x.id === m);
-                return f ? '[' + f.label + ']' : m;
-            });
-        }
-        function buildComputationBuilderHtml(form, field) {
-            const srcs = getComputationSourceFields(form, field);
-            const opts = srcs.map(f => `<option value="${f.id}">${f.label}</option>`).join('');
-            const ops = ['+', '-', '*', '/', '(', ')'];
-            const opLabels = { '+': '+', '-': '−', '*': '×', '/': '÷', '(': '(', ')': ')' };
-            return `<div class="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-2">
-                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Computation Builder</div>
-                <div class="flex flex-wrap items-center gap-2">
-                    <select id="comp_pick_${field.id}" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5 flex-1 min-w-[140px]">
-                        <option value="">Choose field to compute...</option>${opts}
-                    </select>
-                    <button type="button" onclick="insertFormulaField('${form.id}', '${field.id}')" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"><i class="fa-solid fa-plus"></i> Add Field</button>
-                </div>
-                <div class="flex flex-wrap items-center gap-1.5">
-                    ${ops.map(o => `<button type="button" onclick="insertFormulaOperator('${form.id}', '${field.id}', '${o}')" class="bg-slate-950 border border-slate-700 text-amber-300 text-xs font-bold w-8 py-1.5 rounded-lg hover:bg-slate-800">${opLabels[o]}</button>`).join('')}
-                    <button type="button" onclick="undoFormulaToken('${form.id}', '${field.id}')" class="bg-slate-950 border border-slate-700 text-slate-300 text-xs px-2.5 py-1.5 rounded-lg hover:bg-slate-800" title="Remove last item"><i class="fa-solid fa-delete-left"></i></button>
-                    <button type="button" onclick="clearFormula('${form.id}', '${field.id}')" class="bg-slate-950 border border-rose-500/30 text-rose-400 text-xs px-2.5 py-1.5 rounded-lg hover:bg-slate-800">Clear</button>
-                </div>
-                <div class="text-xs font-mono text-emerald-400 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 min-h-[32px]">${field.formula ? formulaToReadable(form, field.formula) : '<span class="text-slate-500">Formula is empty - add fields and operators above</span>'}</div>
-                <input type="text" value="${field.formula || ''}" placeholder="Formula e.g. (f1)*(f2)" onchange="updateFieldFormula('${form.id}', '${field.id}', this.value); renderFormEditorWorkspace();" class="w-full bg-slate-950 border border-slate-800 text-slate-500 font-mono text-[10px] px-3 py-1.5 rounded-lg">
-            </div>`;
-        }
-        function setFormulaAndRefresh(formId, fieldId, formula) {
-            const form = forms.find(f => f.id === formId);
-            const field = form ? form.fields.find(f => f.id === fieldId) : null;
-            if(!field) return;
-            field.formula = formula;
-            saveAllFormDesigns();
-            renderFormEditorWorkspace();
-        }
-        function getFormulaField(formId, fieldId) {
-            const form = forms.find(f => f.id === formId);
-            return form ? form.fields.find(f => f.id === fieldId) : null;
-        }
-        function insertFormulaField(formId, fieldId) {
-            const field = getFormulaField(formId, fieldId);
-            const pick = document.getElementById('comp_pick_' + fieldId);
-            if(!field || !pick || !pick.value) { showToast('Choose a field first', 'error'); return; }
-            const cur = (field.formula || '').trim();
-            setFormulaAndRefresh(formId, fieldId, (cur ? cur + ' ' : '') + '(' + pick.value + ')');
-        }
-        function insertFormulaOperator(formId, fieldId, op) {
-            const field = getFormulaField(formId, fieldId);
-            if(!field) return;
-            const cur = (field.formula || '').trim();
-            setFormulaAndRefresh(formId, fieldId, (cur ? cur + ' ' : '') + op);
-        }
-        function undoFormulaToken(formId, fieldId) {
-            const field = getFormulaField(formId, fieldId);
-            if(!field) return;
-            const toks = (field.formula || '').trim().split(/\s+/).filter(Boolean);
-            toks.pop();
-            setFormulaAndRefresh(formId, fieldId, toks.join(' '));
-        }
-        function clearFormula(formId, fieldId) { setFormulaAndRefresh(formId, fieldId, ''); }
-        function moveFieldInForm(formId, fieldId, delta) {
-            const form = forms.find(f => f.id === formId);
-            if(!form) return;
-            const i = form.fields.findIndex(f => f.id === fieldId);
-            const j = i + delta;
-            if(i < 0 || j < 0 || j >= form.fields.length) return;
-            const tmp = form.fields[i]; form.fields[i] = form.fields[j]; form.fields[j] = tmp;
-            renderFormEditorWorkspace();
-            saveAllFormDesigns();
+            if(form) { form.fields.push({ id: 'f_' + Math.random().toString(36).substring(2,7), label: 'New Field', type: 'text' }); renderFormEditorWorkspace(); }
         }
         function removeFieldFromForm(formId, fieldId) {
             const form = forms.find(f => f.id === formId);
@@ -3000,7 +2928,7 @@ function doPost(e) {
         }
         function openNewFormModal() {
             const id = 'form_' + Date.now();
-            forms.push({ id, name: 'New Template Form', endpoint: '', fields: [{ id: 'f1', label: 'Item Name', type: 'text_ocr', hidden: false, column: 1 }] });
+            forms.push({ id, name: 'New Template Form', fields: [{ id: 'f1', label: 'Item Name', type: 'text' }] });
             selectedDesignFormId = id; renderDesignerFormList(); renderFormEditorWorkspace(); renderFormSelector();
         }
         function deleteForm(id) { forms = forms.filter(f => f.id !== id); renderDesignerFormList(); renderFormSelector(); }
@@ -3049,73 +2977,21 @@ function doPost(e) {
         function saveConnectionSettings() {
             const webappId = document.getElementById('setting-webapp-id').value;
             const sheetUrl = document.getElementById('setting-sheet-url').value;
-            const token = (document.getElementById('setting-token').value || '').trim();
-            localStorage.setItem('ullswater_connection_settings', JSON.stringify({ webappId, sheetUrl, token }));
+            localStorage.setItem('ullswater_connection_settings', JSON.stringify({ webappId, sheetUrl }));
             showToast('Connection saved', 'success');
-            setTimeout(() => pullFromCloud(false), 300);
         }
         function loadSettingsToUI() {
             const saved = JSON.parse(localStorage.getItem('ullswater_connection_settings'));
             if(saved) {
                 if(saved.webappId) document.getElementById('setting-webapp-id').value = saved.webappId;
                 if(saved.sheetUrl) document.getElementById('setting-sheet-url').value = saved.sheetUrl;
-                if(saved.token) document.getElementById('setting-token').value = saved.token;
             }
         }
 
-        function renderUserAccessSummary(u) {
-            if (u.role === 'Administrator') return '<span class="text-emerald-400 font-semibold">All Forms (Edit)</span>';
-            if (!u.formAccess) return '<span class="text-emerald-400 font-semibold">All Forms (Edit)</span>';
-            const badges = forms.map(f => {
-                const lvl = u.formAccess[f.id] || 'none';
-                const cls = lvl === 'edit' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : lvl === 'view' ? 'bg-amber-500/10 text-amber-300 border-amber-500/30' : 'bg-slate-800 text-slate-500 border-slate-700';
-                const lbl = lvl === 'edit' ? 'Edit' : lvl === 'view' ? 'View' : 'None';
-                return `<span class="inline-block border ${cls} px-2 py-0.5 rounded-full text-[10px] mr-1 mb-1">${f.name}: ${lbl}</span>`;
-            }).join('');
-            return badges || '<span class="text-slate-500">No forms</span>';
-        }
         function renderUsersTable() {
             document.getElementById('users-table-body').innerHTML = users.map(u => `
-                <tr class="border-b border-slate-800"><td class="p-3.5 font-bold text-white">@${u.username}</td><td class="p-3.5 text-slate-300">${u.fullname} <br><span class="text-[10px] text-blue-400 font-mono">${u.role}</span></td><td class="p-3.5 text-slate-300">${renderUserAccessSummary(u)}</td><td class="p-3.5 text-right space-x-2 whitespace-nowrap"><button onclick="openFormAccessModal('${u.username}')" title="Set form view / edit permissions" class="bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 px-2.5 py-1 rounded-lg text-[11px] font-semibold"><i class="fa-solid fa-key mr-1"></i>Form Access</button><button onclick="deleteUser('${u.username}')" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button></td></tr>
+                <tr class="border-b border-slate-800"><td class="p-3.5 font-bold text-white">@${u.username}</td><td class="p-3.5 text-slate-300">${u.fullname} <br><span class="text-[10px] text-blue-400 font-mono">${u.role}</span></td><td class="p-3.5 text-slate-300">All Forms</td><td class="p-3.5 text-right"><button onclick="deleteUser('${u.username}')" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button></td></tr>
             `).join('');
-        }
-        let accessEditingUser = null;
-        function openFormAccessModal(username) {
-            const u = users.find(x => x.username === username);
-            if (!u) return;
-            accessEditingUser = username;
-            document.getElementById('form-access-title').innerText = `Form Access - @${u.username}`;
-            const box = document.getElementById('form-access-list');
-            if (u.role === 'Administrator') {
-                box.innerHTML = '<div class="text-xs text-emerald-400 bg-slate-950 border border-slate-800 rounded-xl p-3">Administrators always have full view and edit access to every form.</div>';
-            } else {
-                box.innerHTML = forms.map(f => {
-                    const lvl = u.formAccess ? (u.formAccess[f.id] || 'none') : 'edit';
-                    return `<div class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2">
-                        <span class="text-xs text-white font-semibold">${f.name}</span>
-                        <select data-form-id="${f.id}" class="bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5">
-                            <option value="none" ${lvl === 'none' ? 'selected' : ''}>No Access</option>
-                            <option value="view" ${lvl === 'view' ? 'selected' : ''}>View Only</option>
-                            <option value="edit" ${lvl === 'edit' ? 'selected' : ''}>View & Edit</option>
-                        </select>
-                    </div>`;
-                }).join('') || '<div class="text-xs text-slate-500">No forms available.</div>';
-            }
-            document.getElementById('form-access-modal').classList.remove('hidden');
-        }
-        function closeFormAccessModal() { document.getElementById('form-access-modal').classList.add('hidden'); accessEditingUser = null; }
-        function saveFormAccess() {
-            const u = users.find(x => x.username === accessEditingUser);
-            if (u && u.role !== 'Administrator') {
-                const map = {};
-                document.querySelectorAll('#form-access-list select[data-form-id]').forEach(sel => { map[sel.getAttribute('data-form-id')] = sel.value; });
-                u.formAccess = map;
-                localStorage.setItem('ullswater_users', JSON.stringify(users));
-                renderUsersTable();
-                if (u.username === activeUser) { renderFormSelector(); renderActiveFormFields(); renderLedgerTable(); }
-                showToast(`Form access saved for @${u.username}`, 'success');
-            }
-            closeFormAccessModal();
         }
         function openAddUserModal() { document.getElementById('user-modal').classList.remove('hidden'); }
         function closeUserModal() { document.getElementById('user-modal').classList.add('hidden'); }
