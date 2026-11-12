@@ -210,6 +210,10 @@
                     <i class="fa-solid fa-keyboard w-5 text-center text-base"></i>
                     <span class="hidden md:inline">Data Entry</span>
                 </button>
+                <button onclick="switchTab('pos')" id="nav-pos" class="nav-btn flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs md:text-sm font-medium transition-all text-slate-400 hover:text-white hover:bg-slate-800">
+                    <i class="fa-solid fa-cash-register w-5 text-center text-base"></i>
+                    <span class="hidden md:inline">POS Entry</span>
+                </button>
                 <button onclick="switchTab('ledger')" id="nav-ledger" class="nav-btn flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs md:text-sm font-medium transition-all text-slate-400 hover:text-white hover:bg-slate-800">
                     <i class="fa-solid fa-book-open w-5 text-center text-base"></i>
                     <span class="hidden md:inline">Ledger & Tickets</span>
@@ -367,6 +371,107 @@
             </div>
 
             <!-- TAB 2: LEDGER & TICKETS -->
+            <div id="tab-pos" class="tab-content flex-1 overflow-y-auto p-4 md:p-6 hidden">
+                <div class="max-w-6xl w-full mx-auto space-y-6">
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-6">
+                        <h3 class="text-lg font-bold text-white flex items-center gap-2"><i class="fa-solid fa-cash-register text-emerald-400"></i> POS Entry &ndash; Scan &amp; Sell</h3>
+                        <p class="text-xs text-slate-400 mt-0.5">Scan items with the camera, a USB / Bluetooth scanner or type the barcode. Prices come from the Inventory list below. Each sale is saved to the Ledger and the Google Sheet (&ldquo;POS Sales&rdquo;).</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                        <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 self-start">
+                            <div class="flex items-center justify-between">
+                                <h4 class="text-xs font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-barcode text-blue-400"></i> Scanner</h4>
+                                <button id="pos-cam-btn" onclick="posToggleCamera()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700">Start Camera</button>
+                            </div>
+                            <div class="relative w-full h-52 bg-slate-950 rounded-xl overflow-hidden border border-slate-800">
+                                <video id="pos-video" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover"></video>
+                                <div class="absolute inset-x-6 top-1/2 h-0.5 bg-rose-500/70 pointer-events-none"></div>
+                            </div>
+                            <p id="pos-status" class="text-[11px] text-slate-400">Camera idle</p>
+                            <div class="flex gap-2">
+                                <input type="text" id="pos-manual" onkeydown="if(event.key==='Enter'){event.preventDefault();posManualAdd();}" placeholder="Scan / type barcode (3*code = qty 3)" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5 font-mono">
+                                <button onclick="posManualAdd()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shrink-0">Add</button>
+                            </div>
+                            <div id="pos-new-panel" class="hidden bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 space-y-2">
+                                <div class="text-xs font-bold text-amber-300"><i class="fa-solid fa-circle-question"></i> Item not in inventory &ndash; add it with a price</div>
+                                <input type="text" id="pos-new-barcode" readonly class="w-full bg-slate-950 border border-slate-700 text-slate-300 text-xs rounded-lg px-3 py-2 font-mono">
+                                <input type="text" id="pos-new-name" placeholder="Item name" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-3 py-2">
+                                <input type="number" id="pos-new-price" step="0.01" min="0" placeholder="Price" onkeydown="if(event.key==='Enter'){event.preventDefault();posNewSave();}" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-3 py-2">
+                                <div class="flex gap-2"><button onclick="posNewSave()" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2 rounded-lg">Save &amp; Add to Cart</button><button onclick="posNewCancel()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-4 py-2 rounded-lg">Cancel</button></div>
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                            <div id="pos-edit-banner" class="hidden bg-amber-500/10 border-b border-amber-500/30 text-amber-300 text-xs font-semibold px-4 py-2.5 flex items-center justify-between gap-2">
+                                <span><i class="fa-solid fa-pen"></i> Editing <b id="pos-edit-label"></b></span>
+                                <button onclick="posResetSale()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1 rounded-lg">Cancel edit</button>
+                            </div>
+                            <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+                                <h4 class="text-xs font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-cart-shopping text-emerald-400"></i> Current Sale</h4>
+                                <span class="text-[11px] text-slate-400 font-mono"><span id="pos-count">0</span> item(s)</span>
+                            </div>
+                            <div class="overflow-x-auto"><table class="w-full text-left text-xs text-slate-300">
+                                <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr><th class="p-2.5">Item</th><th class="p-2.5 text-right">Price</th><th class="p-2.5 text-right">Qty</th><th class="p-2.5 text-right">Amount</th><th class="p-2.5"></th></tr></thead>
+                                <tbody id="pos-cart-body"></tbody>
+                            </table></div>
+                            <div class="p-4 space-y-3 border-t border-slate-800">
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                    <div><label class="block text-[10px] text-slate-400 uppercase mb-1">Discount (amount)</label><input type="number" id="pos-discount" step="0.01" min="0" value="0" oninput="posRecalc()" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-2.5 py-2"></div>
+                                    <div><label class="block text-[10px] text-slate-400 uppercase mb-1">Tax %</label><input type="number" id="pos-tax" step="0.01" min="0" value="0" oninput="posRecalc()" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-2.5 py-2"></div>
+                                    <div><label class="block text-[10px] text-slate-400 uppercase mb-1">Payment</label><select id="pos-payment" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-2.5 py-2"><option>Cash</option><option>Card</option><option>GCash</option><option>Other</option></select></div>
+                                    <div><label class="block text-[10px] text-slate-400 uppercase mb-1">Amount Tendered</label><input type="number" id="pos-tendered" step="0.01" min="0" placeholder="= total" oninput="posRecalc()" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-2.5 py-2"></div>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2 text-center">
+                                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-2.5"><span class="text-[10px] text-slate-500 uppercase block font-semibold">Subtotal</span><span id="pos-subtotal" class="font-mono text-sm text-slate-200 font-bold">0.00</span></div>
+                                    <div class="bg-slate-950 border border-emerald-500/40 rounded-xl p-2.5"><span class="text-[10px] text-emerald-400 uppercase block font-semibold">Total</span><span id="pos-total" class="font-mono text-lg text-emerald-400 font-bold">0.00</span></div>
+                                    <div class="bg-slate-950 border border-slate-800 rounded-xl p-2.5"><span class="text-[10px] text-slate-500 uppercase block font-semibold">Change</span><span id="pos-change" class="font-mono text-sm text-amber-300 font-bold">0.00</span></div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button id="pos-save-btn" onclick="posSaveSale()" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold py-3 rounded-xl shadow-md"><i class="fa-solid fa-floppy-disk"></i> <span id="pos-save-label">Save Sale</span></button>
+                                    <button onclick="posResetSale()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-semibold px-5 py-3 rounded-xl">Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                        <div class="p-4 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+                            <h4 class="text-xs font-bold text-white uppercase tracking-wider">Recent POS Sales</h4>
+                            <span class="text-[10px] text-slate-400">Edit loads the sale back into the cart. Void keeps it in the ledger marked VOID. Remove deletes it.</span>
+                        </div>
+                        <div class="overflow-x-auto"><table class="w-full text-left text-xs text-slate-300">
+                            <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr><th class="p-3">Receipt</th><th class="p-3">Date / Time</th><th class="p-3">Cashier</th><th class="p-3">Items</th><th class="p-3 text-right">Total</th><th class="p-3">Status</th><th class="p-3 text-right">Actions</th></tr></thead>
+                            <tbody id="pos-recent-body" class="divide-y divide-slate-800/60"></tbody>
+                        </table></div>
+                    </div>
+
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                        <div class="p-4 border-b border-slate-800 space-y-3">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <h4 class="text-xs font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-boxes-stacked text-amber-400"></i> Inventory &amp; Prices <span id="pos-inv-count" class="text-slate-500 font-normal normal-case"></span></h4>
+                                <div class="flex gap-2">
+                                    <button onclick="posInvExport()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700"><i class="fa-solid fa-file-csv text-emerald-400"></i> Export CSV</button>
+                                    <button onclick="document.getElementById('pos-inv-import').click()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700"><i class="fa-solid fa-file-import text-amber-400"></i> Import CSV</button>
+                                    <input type="file" id="pos-inv-import" accept=".csv,text/csv" class="hidden" onchange="posInvImport(event)">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-12 gap-2">
+                                <div class="md:col-span-4 flex gap-2"><input type="text" id="field_posinv_barcode" placeholder="Barcode" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-3 py-2 font-mono"><button onclick="posScanInvBarcode()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-2 rounded-lg shrink-0"><i class="fa-solid fa-barcode"></i></button></div>
+                                <input type="text" id="pos-inv-name" placeholder="Item name" class="md:col-span-4 w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-3 py-2">
+                                <input type="number" id="pos-inv-price" step="0.01" min="0" placeholder="Price" class="md:col-span-2 w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-3 py-2">
+                                <div class="md:col-span-2 flex gap-2"><button id="pos-inv-save-btn" onclick="posInvSave()" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2 rounded-lg">Add Item</button><button onclick="posInvCancel()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-2 rounded-lg">Clear</button></div>
+                            </div>
+                            <input type="text" id="pos-inv-search" oninput="posInvRender()" placeholder="Search inventory..." class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-3 py-2">
+                        </div>
+                        <div class="overflow-x-auto max-h-96"><table class="w-full text-left text-xs text-slate-300">
+                            <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold sticky top-0"><tr><th class="p-3">Barcode</th><th class="p-3">Item</th><th class="p-3 text-right">Price</th><th class="p-3">Price Logged</th><th class="p-3 text-right">Actions</th></tr></thead>
+                            <tbody id="pos-inv-body" class="divide-y divide-slate-800/60"></tbody>
+                        </table></div>
+                    </div>
+                </div>
+            </div>
+
             <div id="tab-ledger" class="tab-content flex-1 overflow-y-auto p-4 md:p-6 hidden">
                 <div class="max-w-6xl w-full mx-auto space-y-6">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-6">
@@ -399,7 +504,7 @@
                         <div class="flex items-end justify-between gap-3 flex-wrap">
                             <h4 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-chart-pie text-blue-400"></i> Ledger Dashboard</h4>
                             <div class="flex items-end gap-2 flex-wrap">
-                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entry Sheet</label><select id="ld-sheet" onchange="setSheetSelection(this.value)" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5 max-w-[200px]"></select></div>
+                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entry Sheet</label><div id="ld-sheet" class="relative"></div></div>
                                 <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">From</label><input type="date" id="ld-from" onchange="renderLedgerTable()" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></div>
                                 <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">To</label><input type="date" id="ld-to" onchange="renderLedgerTable()" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></div>
                                 <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Asset Unit</label><div id="ld-unit" class="relative"></div></div>
@@ -450,7 +555,7 @@
 
                         <div>
                             <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entry Sheet</label>
-                            <select id="stmt-sheet" onchange="setSheetSelection(this.value)" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-2.5 py-2"></select>
+                            <div id="stmt-sheet" class="relative"></div>
                         </div>
 
                         <div class="grid grid-cols-2 gap-2">
@@ -474,7 +579,12 @@
                             <div class="space-y-2 mt-3">
                                 <div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider">Core</div>
 <div><label class="block text-[10px] text-slate-400 uppercase mb-1">Asset Unit field</label><select id="stmt-unit-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Amount field</label><select id="stmt-amount-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div>
-                                <div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider pt-1">Report columns</div>
+                                <div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider pt-1">Income / Expense (auto Add / Deduct)</div>
+<div><label class="block text-[10px] text-slate-400 uppercase mb-1">Type column (Revenue / Cost)</label><select id="stmt-type-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div>
+<div class="grid grid-cols-2 gap-2"><div><label class="block text-[10px] text-emerald-400 uppercase mb-1">Income values (+)</label><input type="text" id="stmt-income-words" onchange="onStmtFieldChange()" placeholder="revenue,income" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div><div><label class="block text-[10px] text-rose-400 uppercase mb-1">Deduction values (−)</label><input type="text" id="stmt-cost-words" onchange="onStmtFieldChange()" placeholder="cost,expense" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div></div>
+<p class="text-[10px] text-slate-500">Rows whose type matches a deduction word are marked <b>Deduction</b> automatically (Revenue = Additional). You can still change any row in the Add / Deduct column. Separate several words with commas; leave the type column on None to mark everything by hand.</p>
+<div id="stmt-type-hint" class="text-[10px] text-slate-400 font-mono leading-relaxed"></div>
+<div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider pt-1">Report columns</div>
 <div><label class="block text-[10px] text-slate-400 uppercase mb-1">Date column</label><select id="stmt-date-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Reference / Ticket column</label><select id="stmt-ref-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Quantity column</label><select id="stmt-qty-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Rate column</label><select id="stmt-rate-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div>
                                 <div class="text-[9px] font-bold text-blue-400 uppercase tracking-wider pt-1">Description column (combined)</div>
 <div><label class="block text-[10px] text-slate-400 uppercase mb-1">Description field 1</label><select id="stmt-desc1-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Description field 2</label><select id="stmt-desc2-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div><div><label class="block text-[10px] text-slate-400 uppercase mb-1">Description field 3</label><select id="stmt-desc3-field" onchange="onStmtFieldChange()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select></div>
@@ -641,7 +751,7 @@
                                 <div class="space-y-2">
                                     <label class="block text-xs font-bold text-slate-300 uppercase">Reference Center (Lat, Lng)</label>
                                     <div class="flex gap-2">
-                                        <input type="text" id="geofence-center-input" placeholder="Center not set..." class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl px-3 py-2 font-mono">
+                                        <input type="text" id="geofence-center-input" onchange="applyGeofenceCenterText(this.value)" placeholder="Center not set..." class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl px-3 py-2 font-mono">
                                         <button onclick="setGeofenceCenterToCurrent()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-2 rounded-xl transition shrink-0">Current GPS</button>
                                     </div>
                                 </div>
@@ -1493,6 +1603,7 @@ function doGet(e) {
         let qrAutoEntryStream = null;
 
         window.onload = function() {
+            ensurePosForm();
             applyNightVisionTheme(isNightVision);
             checkAuthSession();
             renderFormSelector();
@@ -1509,6 +1620,7 @@ function doGet(e) {
             loadSettingsToUI();
             updateGpsTrackerUI();
             loadGeofenceUI();
+            updateSatNavPointsDisplay();
 
             if (autoGpsEnabled) startAutoGpsTracker();
             startSheetAutoPull();
@@ -1603,9 +1715,13 @@ function doGet(e) {
                 activeBtn.classList.add('text-white', 'bg-blue-600', 'shadow-md');
             }
 
-            if(tabName === 'gps' && satnavLeafletMap) {
-                setTimeout(() => satnavLeafletMap.invalidateSize(), 200);
+            if(tabName === 'gps') {
+                loadGeofenceUI();
+                setTimeout(() => { if (satnavLeafletMap) satnavLeafletMap.invalidateSize(); updateSatNavPointsDisplay(); }, 200);
             }
+            if(tabName !== 'comms' && activeCommsStream) stopWebcamFeed();   // release the camera for the scanners
+            if(tabName !== 'pos') posStopCamera();
+            if(tabName === 'pos') posOpenTab();
             if(tabName === 'comms' && !activeCommsStream) startWebcamFeed();
             if(tabName === 'ledger') renderLedgerTable();
             if(tabName === 'statement') initStatementTab();
@@ -1631,21 +1747,38 @@ function doGet(e) {
         // Webcam & Messenger
         async function startWebcamFeed() {
             const videoEl = document.getElementById('comms-webcam-video');
+            const statusEl = document.getElementById('webcam-status-text'), dot = document.getElementById('webcam-status-dot');
+            const setS = (t, live) => { statusEl.innerText = t; dot.className = live ? "w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" : "w-2.5 h-2.5 rounded-full bg-rose-500"; };
+            if (activeCommsStream || window.__webcamStarting) return;
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setS('Camera needs HTTPS (or localhost)', false); showToast('Webcam blocked: open the app over HTTPS', 'error'); return; }
+            window.__webcamStarting = true;
             try {
-                activeCommsStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                videoEl.srcObject = activeCommsStream;
-                document.getElementById('webcam-status-dot').className = "w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse";
-                document.getElementById('webcam-status-text').innerText = "Videoconference Live";
-                setupMicrophoneVisualizer(activeCommsStream);
-            } catch(err) {
-                document.getElementById('webcam-status-text').innerText = "Webcam Standby";
-            }
+                posStopCamera();                                   // free the camera if the POS scanner holds it
+                let stream = null, err = null;
+                for (const c of [{ video: true, audio: true }, { video: true, audio: false }]) {   // fall back to video-only when there is no / blocked microphone
+                    try { stream = await navigator.mediaDevices.getUserMedia(c); break; } catch (e) { err = e; }
+                }
+                if (!stream) {
+                    const n = err && err.name;
+                    setS(n === 'NotAllowedError' ? 'Camera permission denied' : n === 'NotFoundError' ? 'No camera found' : n === 'NotReadableError' ? 'Camera in use by another app' : 'Webcam unavailable', false);
+                    return;
+                }
+                activeCommsStream = stream; videoEl.srcObject = stream;
+                try { await videoEl.play(); } catch (e) {}
+                const hasMic = stream.getAudioTracks().length > 0;
+                setS(hasMic ? 'Videoconference Live' : 'Camera Live (no microphone)', true);
+                const ml = document.getElementById('mic-label'); if (!hasMic && ml) ml.innerText = 'No Mic';
+                if (hasMic) setupMicrophoneVisualizer(stream);
+            } finally { window.__webcamStarting = false; }
         }
 
         function stopWebcamFeed() {
             if(activeCommsStream) {
                 activeCommsStream.getTracks().forEach(track => track.stop());
                 activeCommsStream = null;
+                if (visualizerAnimFrame) { cancelAnimationFrame(visualizerAnimFrame); visualizerAnimFrame = null; }
+                try { if (audioVisualizerCtx) audioVisualizerCtx.close(); } catch (e) {}
+                audioVisualizerCtx = null;
                 const videoEl = document.getElementById('comms-webcam-video');
                 if(videoEl) videoEl.srcObject = null;
                 document.getElementById('webcam-status-dot').className = "w-2.5 h-2.5 rounded-full bg-rose-500";
@@ -1785,6 +1918,7 @@ function doGet(e) {
 
         function initSatNavLeafletMap() {
             if (satnavLeafletMap) return;
+            if (typeof L === 'undefined') { const h = document.getElementById('satnav-leaflet-map'); if (h) h.innerHTML = '<div class="p-6 text-xs text-slate-400">Map library could not load. Check your internet connection and reload.</div>'; return; }
             satnavLeafletMap = L.map('satnav-leaflet-map', { zoomControl: false, attributionControl: false }).setView([10.343252, 123.926411], 14);
             L.control.zoom({ position: 'topright' }).addTo(satnavLeafletMap);
             setMapLayer('hybrid');
@@ -1796,52 +1930,121 @@ function doGet(e) {
             });
             satnavMarker = L.marker([10.343252, 123.926411], { icon: vehicleIcon }).addTo(satnavLeafletMap);
             satnavPolyline = L.polyline([], { color: isNightVision ? '#f59e0b' : '#00f0ff', weight: 4 }).addTo(satnavLeafletMap);
+            satnavGeofenceCircle = L.circle([geoDraft.lat, geoDraft.lng], { radius: geoDraft.radius, color: '#22d3ee', weight: 2, fillOpacity: 0.08 }).addTo(satnavLeafletMap);
+            satnavLeafletMap.on('click', e => { if (clickMapForCenterActive) { setGeofenceCenter(e.latlng.lat, e.latlng.lng); startClickMapToSetCenter(false); } });
         }
 
+        // ---- SatNav: geofence, playback, HUD, GPS logging ----
+        const SATNAV_DEFAULT = { lat: 10.343252, lng: 123.926411, radius: 300 };
+        let geofences = (() => { try { return JSON.parse(localStorage.getItem('ullswater_geofences')) || {}; } catch (e) { return {}; } })();
+        function getGeofence(u) {
+            const g = geofences[u];
+            return g ? g : { lat: geofenceConfig.centerLat || SATNAV_DEFAULT.lat, lng: geofenceConfig.centerLng || SATNAV_DEFAULT.lng, radius: geofenceConfig.radiusMeters || SATNAV_DEFAULT.radius };
+        }
+        let geoDraft = Object.assign({}, getGeofence(geofenceConfig.activeUser || 'admin'));
+        let tileErrCount = 0;
+        const distM = (a, b, c, d) => { const R = 6371000, t = x => x * Math.PI / 180, dLa = t(c - a), dLo = t(d - b); const h = Math.sin(dLa / 2) ** 2 + Math.cos(t(a)) * Math.cos(t(c)) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+        const fmtDist = m => m >= 1000 ? (m / 1000).toFixed(2) + 'km' : Math.round(m) + 'm';
+
         function setMapLayer(style) {
+            document.querySelectorAll('.layer-btn').forEach(b => {
+                const on = b.id === 'btn-layer-' + style;
+                b.classList.toggle('bg-blue-600', on); b.classList.toggle('text-white', on); b.classList.toggle('font-bold', on);
+                b.classList.toggle('text-slate-400', !on); b.classList.toggle('font-medium', !on);
+            });
+            if (typeof L === 'undefined') return;
             if (activeTileLayer && satnavLeafletMap) satnavLeafletMap.removeLayer(activeTileLayer);
+            tileErrCount = 0;
             activeTileLayer = L.tileLayer(getGoogleTileUrl(style), { maxZoom: 21, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'] });
+            activeTileLayer.on('tileerror', () => {
+                if (style === 'dark' || ++tileErrCount !== 4 || !satnavLeafletMap) return;     // Google tiles blocked -> fall back to OpenStreetMap
+                satnavLeafletMap.removeLayer(activeTileLayer);
+                activeTileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(satnavLeafletMap);
+                showToast('Google map tiles unavailable - showing OpenStreetMap', 'error');
+            });
             if (satnavLeafletMap) activeTileLayer.addTo(satnavLeafletMap);
         }
 
-        function filterSatNavByOperator(op) { activeFilteredOperator = op; updateSatNavPointsDisplay(); }
-        function getActiveSatNavPoints() { return activeFilteredOperator === 'ALL' ? gpsLogs : gpsLogs.filter(g => g.user === activeFilteredOperator); }
-
-        function updateSatNavPointsDisplay() {
-            const points = getActiveSatNavPoints();
-            document.getElementById('satnav-scrubber').max = Math.max(0, points.length - 1);
-            if(points.length > 0) applySatNavStep(0);
+        function getActiveSatNavPoints() {
+            const list = activeFilteredOperator === 'ALL' ? gpsLogs : gpsLogs.filter(g => g.user === activeFilteredOperator);
+            return list.slice().sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));      // oldest -> newest
         }
+        function filterSatNavByOperator(op) { activeFilteredOperator = op; stopSatNavPlayback('Idle'); playbackIndex = 0; updateSatNavPointsDisplay(); }
 
-        function applySatNavStep(idx) {
-            const points = getActiveSatNavPoints();
-            if (!points || points.length === 0) return;
-            playbackIndex = idx;
-            const pt = points[playbackIndex];
-            if(pt && satnavMarker) {
-                satnavMarker.setLatLng([parseFloat(pt.lat), parseFloat(pt.lng)]);
-                satnavLeafletMap.panTo([parseFloat(pt.lat), parseFloat(pt.lng)]);
+        function setBoundary(inside) {
+            const b = document.getElementById('satnav-hud-boundary'), ban = document.getElementById('geofence-status-banner');
+            if (inside === null) {
+                if (b) { b.innerText = '—'; b.className = 'font-mono text-xs text-slate-400 font-bold'; }
+                if (ban) { ban.className = 'bg-slate-800/60 border border-slate-700 text-slate-300 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between'; ban.innerHTML = '<span>Status: No GPS data</span><span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>'; }
+            } else if (inside) {
+                if (b) { b.innerText = 'INSIDE'; b.className = 'font-mono text-xs text-emerald-400 font-bold'; }
+                if (ban) { ban.className = 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between'; ban.innerHTML = '<span>Status: Inside Boundary</span><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>'; }
+            } else {
+                if (b) { b.innerText = 'OUTSIDE'; b.className = 'font-mono text-xs text-rose-400 font-bold'; }
+                if (ban) { ban.className = 'bg-rose-500/10 border border-rose-500/30 text-rose-300 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between'; ban.innerHTML = '<span>Status: OUTSIDE Boundary</span><span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse"></span>'; }
             }
+        }
+        function updateSatNavHud(pt, idx, total) {
+            const set = (id, t) => { const e = document.getElementById(id); if (e) e.innerText = t; };
+            if (!pt) { set('satnav-current-coords', 'No GPS points recorded yet'); set('satnav-step-badge', 'Standby / Ready'); set('satnav-hud-distance', '—'); set('satnav-hud-accuracy', '—'); setBoundary(null); return; }
+            const lat = parseFloat(pt.lat), lng = parseFloat(pt.lng), d = distM(geoDraft.lat, geoDraft.lng, lat, lng);
+            set('satnav-current-coords', `${lat.toFixed(6)}, ${lng.toFixed(6)} • @${pt.user}`);
+            set('satnav-step-badge', `Point ${idx + 1} / ${total}`);
+            set('satnav-hud-distance', fmtDist(d));
+            set('satnav-hud-accuracy', pt.accuracy || '—');
+            setBoundary(d <= geoDraft.radius);
+        }
+        function setPlayStatus(t) {
+            const e = document.getElementById('satnav-hud-status'); if (e) e.innerText = t;
+            const l = document.getElementById('satnav-play-label'); if (l) l.innerText = t === 'Playing' ? 'Playing…' : 'Playback SatNav Route';
+        }
+        function applySatNavStep(idx, pan) {
+            const pts = getActiveSatNavPoints();
+            if (!pts.length) { updateSatNavHud(null); return; }
+            playbackIndex = Math.max(0, Math.min(idx, pts.length - 1));
+            const pt = pts[playbackIndex], ll = [parseFloat(pt.lat), parseFloat(pt.lng)];
+            if (satnavMarker) satnavMarker.setLatLng(ll);
+            if (satnavLeafletMap && pan !== false) satnavLeafletMap.panTo(ll);
+            const sc = document.getElementById('satnav-scrubber'); if (sc) { sc.max = Math.max(0, pts.length - 1); sc.value = playbackIndex; }
+            updateSatNavHud(pt, playbackIndex, pts.length);
+        }
+        function updateSatNavPointsDisplay() {
+            const pts = getActiveSatNavPoints();
+            const sc = document.getElementById('satnav-scrubber'); if (sc) sc.max = Math.max(0, pts.length - 1);
+            if (satnavPolyline) satnavPolyline.setLatLngs(pts.map(p => [parseFloat(p.lat), parseFloat(p.lng)]));
+            playbackIndex = Math.min(playbackIndex, Math.max(0, pts.length - 1));
+            if (satnavLeafletMap && pts.length > 1 && !satNavPlaybackTimer) { try { satnavLeafletMap.fitBounds(satnavPolyline.getBounds().pad(0.2)); } catch (e) {} }
+            if (pts.length) applySatNavStep(playbackIndex, pts.length === 1);
+            else updateSatNavHud(null);
         }
 
         function startSatNavPlayback() {
+            const pts = getActiveSatNavPoints();
+            if (!pts.length) { showToast('No GPS points yet. Use Simulate GPS or turn on Auto GPS Log.', 'error'); return; }
             if (satNavPlaybackTimer) clearInterval(satNavPlaybackTimer);
+            if (playbackIndex >= pts.length - 1) playbackIndex = 0;
+            applySatNavStep(playbackIndex);
+            setPlayStatus('Playing');
             satNavPlaybackTimer = setInterval(() => {
-                const pts = getActiveSatNavPoints();
-                if (playbackIndex < pts.length - 1) {
-                    playbackIndex++;
-                    applySatNavStep(playbackIndex);
-                } else stopSatNavPlayback();
-            }, 1000);
+                if (playbackIndex < getActiveSatNavPoints().length - 1) applySatNavStep(playbackIndex + 1);
+                else stopSatNavPlayback('Complete');
+            }, Math.max(100, 1000 / currentPlaybackSpeed));
         }
-
-        function stopSatNavPlayback() {
+        function stopSatNavPlayback(label) {
             if (satNavPlaybackTimer) { clearInterval(satNavPlaybackTimer); satNavPlaybackTimer = null; }
+            setPlayStatus(typeof label === 'string' ? label : 'Paused');
         }
-
         function stepPlayback(delta) { seekPlayback(playbackIndex + delta); }
         function seekPlayback(val) { applySatNavStep(Math.max(0, Math.min(val, getActiveSatNavPoints().length - 1))); }
-        function setPlaybackSpeed(s) { currentPlaybackSpeed = s; }
+        function setPlaybackSpeed(s) {
+            currentPlaybackSpeed = s;
+            document.querySelectorAll('.speed-btn').forEach(b => {
+                const on = b.id === 'spd-' + s;
+                b.classList.toggle('bg-blue-600', on); b.classList.toggle('text-white', on); b.classList.toggle('font-bold', on);
+                b.classList.toggle('bg-slate-800', !on); b.classList.toggle('text-slate-400', !on);
+            });
+            if (satNavPlaybackTimer) startSatNavPlayback();
+        }
 
         function toggleAutoGpsTracker() {
             autoGpsEnabled = !autoGpsEnabled;
@@ -1849,72 +2052,130 @@ function doGet(e) {
             updateGpsTrackerUI();
             if(autoGpsEnabled) startAutoGpsTracker(); else stopAutoGpsTracker();
         }
-
         function updateGpsTrackerUI() {
             document.getElementById('gps-tracker-label').innerText = autoGpsEnabled ? "Auto GPS Log: ON" : "Auto GPS Log: OFF";
+            const dot = document.getElementById('gps-tracker-indicator');
+            if (dot) dot.className = autoGpsEnabled ? 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse' : 'w-2.5 h-2.5 rounded-full bg-slate-500';
         }
-
         function startAutoGpsTracker() {
             stopAutoGpsTracker();
             executeAutoGpsLog();
             autoGpsTimer = setInterval(executeAutoGpsLog, 300000);
         }
+        function stopAutoGpsTracker() { if (autoGpsTimer) clearInterval(autoGpsTimer); autoGpsTimer = null; }
 
-        function stopAutoGpsTracker() { if (autoGpsTimer) clearInterval(autoGpsTimer); }
-
-        function executeAutoGpsLog() {
-            if (!navigator.geolocation) return;
-            navigator.geolocation.getCurrentPosition(pos => {
-                const ping = {
-                    id: 'GPS-' + Math.floor(100000 + Math.random() * 900000),
-                    timestamp: getLocalTimestamp(),
-                    user: activeUser || 'admin',
-                    lat: pos.coords.latitude.toFixed(6),
-                    lng: pos.coords.longitude.toFixed(6),
-                    accuracy: `±${pos.coords.accuracy.toFixed(1)}m`
-                };
-                gpsLogs.unshift(ping);
-                localStorage.setItem('ullswater_gps_logs', JSON.stringify(gpsLogs));
-                renderGpsTable();
-            });
-        }
-
-        function addSimulatedSatNavPing() {
-            const ping = {
-                id: 'GPS-' + Math.floor(100000 + Math.random() * 900000),
-                timestamp: getLocalTimestamp(),
-                user: activeUser || 'admin',
-                lat: (10.343 + (Math.random() - 0.5) * 0.01).toFixed(6),
-                lng: (123.926 + (Math.random() - 0.5) * 0.01).toFixed(6),
-                accuracy: '±3.0m'
-            };
+        function recordGpsPing(lat, lng, accuracy) {
+            const ping = { id: 'GPS-' + Math.floor(100000 + Math.random() * 900000), timestamp: getLocalTimestamp(), user: activeUser || 'admin', lat: Number(lat).toFixed(6), lng: Number(lng).toFixed(6), accuracy };
             gpsLogs.unshift(ping);
             localStorage.setItem('ullswater_gps_logs', JSON.stringify(gpsLogs));
-            renderGpsTable();
-            updateSatNavPointsDisplay();
+            renderGpsTable(); updateSatNavPointsDisplay();
+            const z = getGeofence(ping.user), d = distM(z.lat, z.lng, Number(lat), Number(lng));
+            if (d > z.radius) showToast(`@${ping.user} is OUTSIDE the geofence (${fmtDist(d)} from center)`, 'error');
+            return ping;
+        }
+        function executeAutoGpsLog() {
+            if (!navigator.geolocation) { showToast('GPS is not supported on this device', 'error'); return; }
+            navigator.geolocation.getCurrentPosition(
+                pos => recordGpsPing(pos.coords.latitude, pos.coords.longitude, `±${pos.coords.accuracy.toFixed(1)}m`),
+                err => showToast('GPS unavailable: ' + (err.code === 1 ? 'location permission denied' : 'no signal'), 'error'),
+                { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+        }
+        function addSimulatedSatNavPing() {
+            const last = gpsLogs.find(g => g.user === (activeUser || 'admin'));     // newest first -> continue the route from the last point
+            const bLat = last ? parseFloat(last.lat) : geoDraft.lat, bLng = last ? parseFloat(last.lng) : geoDraft.lng;
+            recordGpsPing(bLat + (Math.random() - 0.4) * 0.0012, bLng + (Math.random() - 0.4) * 0.0012, `±${(2 + Math.random() * 6).toFixed(1)}m`);
         }
 
         function renderGpsTable() {
             const tbody = document.getElementById('gps-table-body');
-            tbody.innerHTML = gpsLogs.map(g => `
-                <tr class="hover:bg-slate-900/50 border-b border-slate-800/60">
+            tbody.innerHTML = gpsLogs.map(g => {
+                const z = g.user === geofenceConfig.activeUser ? geoDraft : getGeofence(g.user);
+                const d = distM(z.lat, z.lng, parseFloat(g.lat), parseFloat(g.lng)), out = d > z.radius;
+                return `
+                <tr class="hover:bg-slate-900/50 border-b border-slate-800/60 cursor-pointer" onclick="focusGpsPoint('${g.id}')">
                     <td class="p-3.5 font-bold text-cyan-400">${g.id}</td>
                     <td class="p-3.5 text-slate-400">${g.timestamp}</td>
                     <td class="p-3.5 text-slate-200">@${g.user}</td>
                     <td class="p-3.5 text-white font-mono">${g.lat}, ${g.lng}</td>
-                    <td class="p-3.5 font-mono text-cyan-300">0m</td>
-                    <td class="p-3.5 text-right"><a href="https://www.google.com/maps?q=${g.lat},${g.lng}" target="_blank" class="bg-cyan-600/20 text-cyan-300 px-2.5 py-1 rounded-lg text-xs"><i class="fa-solid fa-map"></i> Map</a></td>
-                </tr>`).join('');
+                    <td class="p-3.5 font-mono ${out ? 'text-rose-400' : 'text-cyan-300'}">${fmtDist(d)}${out ? ' (outside)' : ''}</td>
+                    <td class="p-3.5 text-right"><a href="https://www.google.com/maps?q=${g.lat},${g.lng}" target="_blank" onclick="event.stopPropagation()" class="bg-cyan-600/20 text-cyan-300 px-2.5 py-1 rounded-lg text-xs"><i class="fa-solid fa-map"></i> Map</a></td>
+                </tr>`;
+            }).join('');
             document.getElementById('gps-total-count').innerText = `${gpsLogs.length} Points Recorded`;
         }
+        function focusGpsPoint(id) {
+            const g = gpsLogs.find(x => x.id === id); if (!g) return;
+            if (activeFilteredOperator !== 'ALL' && g.user !== activeFilteredOperator) { activeFilteredOperator = 'ALL'; const f = document.getElementById('satnav-operator-filter'); if (f) f.value = 'ALL'; updateSatNavPointsDisplay(); }
+            stopSatNavPlayback('Paused');
+            const i = getActiveSatNavPoints().findIndex(p => p.id === id);
+            if (i >= 0) applySatNavStep(i);
+            const m = document.getElementById('satnav-leaflet-map'); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        function clearGpsLogs() { gpsLogs = []; localStorage.removeItem('ullswater_gps_logs'); stopSatNavPlayback('Idle'); playbackIndex = 0; renderGpsTable(); updateSatNavPointsDisplay(); }
 
-        function clearGpsLogs() { gpsLogs = []; localStorage.removeItem('ullswater_gps_logs'); renderGpsTable(); }
-        function loadGeofenceUI() {}
-        function setGeofenceCenterToCurrent() {}
-        function updateGeofenceRadius(v) {}
-        function startClickMapToSetCenter() {}
-        function saveActiveGeofence() {}
-        function loadUserGeofence(u) {}
+        function loadGeofenceUI() {
+            const sel = document.getElementById('geofence-user-select'), opf = document.getElementById('satnav-operator-filter');
+            const opts = users.map(u => `<option value="${escH(u.username)}">@${escH(u.username)}${u.fullname ? ' (' + escH(u.fullname) + ')' : ''}</option>`).join('');
+            if (sel) sel.innerHTML = opts;
+            if (opf) { opf.innerHTML = '<option value="ALL">All Operators</option>' + opts; opf.value = users.some(u => u.username === activeFilteredOperator) ? activeFilteredOperator : 'ALL'; }
+            const who = users.some(u => u.username === geofenceConfig.activeUser) ? geofenceConfig.activeUser : (users.some(u => u.username === activeUser) ? activeUser : (users[0] && users[0].username));
+            if (sel && who) sel.value = who;
+            if (who) loadUserGeofence(who);
+        }
+        function loadUserGeofence(u) {
+            geofenceConfig.activeUser = u;
+            try { localStorage.setItem('ullswater_geofence', JSON.stringify(geofenceConfig)); } catch (e) {}
+            geoDraft = Object.assign({}, getGeofence(u));
+            refreshGeofenceUI(true);
+        }
+        function refreshGeofenceUI(recenter) {
+            const ci = document.getElementById('geofence-center-input'), rs = document.getElementById('geofence-radius-slider'), rv = document.getElementById('radius-val-display');
+            if (ci) ci.value = `${geoDraft.lat.toFixed(6)}, ${geoDraft.lng.toFixed(6)}`;
+            if (rs) rs.value = geoDraft.radius;
+            if (rv) rv.innerText = geoDraft.radius;
+            if (satnavLeafletMap && typeof L !== 'undefined') {
+                if (!satnavGeofenceCircle) satnavGeofenceCircle = L.circle([geoDraft.lat, geoDraft.lng], { radius: geoDraft.radius, color: '#22d3ee', weight: 2, fillOpacity: 0.08 }).addTo(satnavLeafletMap);
+                else { satnavGeofenceCircle.setLatLng([geoDraft.lat, geoDraft.lng]); satnavGeofenceCircle.setRadius(geoDraft.radius); }
+                if (recenter && !getActiveSatNavPoints().length) satnavLeafletMap.setView([geoDraft.lat, geoDraft.lng], satnavLeafletMap.getZoom());
+            }
+            const pts = getActiveSatNavPoints();
+            if (pts.length) updateSatNavHud(pts[playbackIndex] || pts[0], Math.min(playbackIndex, pts.length - 1), pts.length); else updateSatNavHud(null);
+            renderGpsTable();
+        }
+        function setGeofenceCenter(lat, lng) {
+            geoDraft.lat = lat; geoDraft.lng = lng;
+            refreshGeofenceUI(false);
+            if (satnavLeafletMap) satnavLeafletMap.panTo([lat, lng]);
+        }
+        function applyGeofenceCenterText(txt) {
+            const m = String(txt).match(/(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/);
+            if (!m || Math.abs(+m[1]) > 90 || Math.abs(+m[2]) > 180) { showToast('Enter the center as: latitude, longitude', 'error'); refreshGeofenceUI(false); return; }
+            setGeofenceCenter(parseFloat(m[1]), parseFloat(m[2]));
+        }
+        function setGeofenceCenterToCurrent() {
+            if (!navigator.geolocation) { showToast('GPS is not supported on this device', 'error'); return; }
+            navigator.geolocation.getCurrentPosition(
+                pos => { setGeofenceCenter(pos.coords.latitude, pos.coords.longitude); showToast('Center set to your current GPS position', 'success'); },
+                err => showToast('GPS unavailable: ' + (err.code === 1 ? 'location permission denied' : 'no signal'), 'error'),
+                { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+        }
+        function updateGeofenceRadius(v) { geoDraft.radius = parseInt(v) || SATNAV_DEFAULT.radius; refreshGeofenceUI(false); }
+        function startClickMapToSetCenter(force) {
+            clickMapForCenterActive = (typeof force === 'boolean') ? force : !clickMapForCenterActive;
+            const btn = document.getElementById('btn-click-center'), map = document.getElementById('satnav-leaflet-map');
+            if (btn) {
+                btn.innerHTML = clickMapForCenterActive ? '<i class="fa-solid fa-hand-pointer mr-1"></i> Tap the map…' : '<i class="fa-solid fa-map-pin mr-1"></i> Click Map Center';
+                btn.classList.toggle('text-amber-300', clickMapForCenterActive); btn.classList.toggle('text-cyan-300', !clickMapForCenterActive);
+            }
+            if (map) map.style.cursor = clickMapForCenterActive ? 'crosshair' : '';
+        }
+        function saveActiveGeofence() {
+            const u = geofenceConfig.activeUser; if (!u) return;
+            geofences[u] = { lat: geoDraft.lat, lng: geoDraft.lng, radius: geoDraft.radius };
+            try { localStorage.setItem('ullswater_geofences', JSON.stringify(geofences)); localStorage.setItem('ullswater_geofence', JSON.stringify(geofenceConfig)); } catch (e) {}
+            renderGpsTable();
+            showToast(`Geofence saved for @${u} (${geoDraft.radius} m)`, 'success');
+        }
 
         function renderTransmissionsOverview() {
             renderTransmissionsTable('ALL');
@@ -2003,7 +2264,7 @@ function doGet(e) {
         async function openScannerModal(fieldId) {
             activeTargetFieldId = fieldId;
             document.getElementById('scanner-modal').classList.remove('hidden');
-            zxingCodeReader = new ZXing.BrowserMultiFormatReader(makeQrHints());
+            zxingCodeReader = new ZXing.BrowserMultiFormatReader(makeBarcodeHints());
             await startRearCameraScan(zxingCodeReader, 'camera-video-stream', 'scanner-status-text', (res) => applyScannedValue(res.getText()));
         }
         function openScannerModalDirect() { if (forms[0] && forms[0].fields[0]) openScannerModal(forms[0].fields[0].id); }
@@ -2050,7 +2311,7 @@ function doGet(e) {
         // Form Builder & Field Rendering
         function renderFormSelector() {
             const select = document.getElementById('entry-form-select');
-            select.innerHTML = forms.map(f => `<option value="${f.id}" ${f.id === activeFormId ? 'selected' : ''}>${f.name}</option>`).join('');
+            select.innerHTML = forms.filter(f => !f.pos).map(f => `<option value="${f.id}" ${f.id === activeFormId ? 'selected' : ''}>${f.name}</option>`).join('');
         }
 
         function onActiveFormChange(formId) { activeFormId = formId; renderActiveFormFields(); }
@@ -2490,14 +2751,14 @@ function doGet(e) {
         function renderLedgerDashboard(list) {
             const kp = document.getElementById('ld-kpis'); if (!kp) return;
             const live = list.filter(l => l.status !== 'VOID'), voided = list.length - live.length;
-            const total = live.reduce((s, l) => s + getLogAmount(l), 0);
+            const total = live.reduce((s, l) => s + getLogSigned(l), 0);
             const unitMap = {}, formMap = {}, dayMap = {};
-            live.forEach(l => { const u = getLogUnit(l), a = getLogAmount(l), d = getLogDate(l); unitMap[u] = (unitMap[u] || 0) + a; formMap[l.formName] = (formMap[l.formName] || 0) + 1; dayMap[d] = (dayMap[d] || 0) + a; });
+            live.forEach(l => { const u = getLogUnit(l), a = getLogSigned(l), d = getLogDate(l); unitMap[u] = (unitMap[u] || 0) + a; formMap[l.formName] = (formMap[l.formName] || 0) + 1; dayMap[d] = (dayMap[d] || 0) + a; });
             const kpi = (lbl, val, icon, col) => `<div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3"><div class="flex items-center justify-between"><span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">${lbl}</span><i class="fa-solid ${icon} ${col}"></i></div><div class="text-lg font-bold text-white mt-1 font-mono truncate">${val}</div></div>`;
             kp.innerHTML = kpi('Total Tickets', list.length, 'fa-ticket', 'text-blue-400') + kpi('Valid', live.length, 'fa-circle-check', 'text-emerald-400') + kpi('Void', voided, 'fa-ban', 'text-rose-400') +
-                kpi('Total Amount', fmtMoney(total), 'fa-coins', 'text-amber-400') + kpi('Avg / Ticket', fmtMoney(live.length ? total / live.length : 0), 'fa-calculator', 'text-slate-300');
-            const bars = (map, fmt, color) => { const ent = Object.entries(map).sort((a, b) => b[1] - a[1]); const mx = Math.max(1, ...ent.map(e => e[1]));
-                return ent.length ? ent.map(([k, v]) => `<div><div class="flex justify-between text-[11px] text-slate-300 mb-0.5"><span class="truncate pr-2">${escH(k)}</span><span class="font-mono">${fmt(v)}</span></div><div class="h-2 bg-slate-800 rounded-full overflow-hidden"><div class="h-full ${color} rounded-full" style="width:${Math.max(2, v / mx * 100)}%"></div></div></div>`).join('') : '<p class="text-xs text-slate-500">No data.</p>'; };
+                kpi('Net Amount', fmtNet(total), 'fa-coins', 'text-amber-400') + kpi('Avg / Ticket', fmtNet(live.length ? total / live.length : 0), 'fa-calculator', 'text-slate-300');
+            const bars = (map, fmt, color) => { const ent = Object.entries(map).sort((a, b) => b[1] - a[1]); const mx = Math.max(1, ...ent.map(e => Math.abs(e[1])));
+                return ent.length ? ent.map(([k, v]) => `<div><div class="flex justify-between text-[11px] text-slate-300 mb-0.5"><span class="truncate pr-2">${escH(k)}</span><span class="font-mono">${fmt(v)}</span></div><div class="h-2 bg-slate-800 rounded-full overflow-hidden"><div class="h-full ${color} rounded-full" style="width:${Math.max(2, Math.abs(v) / mx * 100)}%"></div></div></div>`).join('') : '<p class="text-xs text-slate-500">No data.</p>'; };
             document.getElementById('ld-chart-units').innerHTML = bars(unitMap, fmtMoney, 'bg-blue-500');
             document.getElementById('ld-chart-forms').innerHTML = bars(formMap, v => v, 'bg-amber-500');
             const dk = Object.keys(dayMap).sort(), dmx = Math.max(1, ...Object.values(dayMap));
@@ -2506,6 +2767,7 @@ function doGet(e) {
 
         function refreshLedgerUnitOptions() {
             if (!document.getElementById('ld-unit')) return;
+            renderSheetMs();
             const units = [...new Set(logs.filter(sheetMatch).map(getLogUnit))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
             unitSel.ld = unitSel.ld.filter(u => units.includes(u));
             renderUnitMs('ld', units);
@@ -2626,6 +2888,15 @@ function doGet(e) {
             a.href = out.toDataURL('image/png'); a.download = `${currentQrTicketId}_QR.png`; a.click();
         }
 
+        function makeBarcodeHints() {   // QR + all common product / shipping barcodes
+            const hints = new Map();
+            try {
+                const F = ZXing.BarcodeFormat;
+                hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+                hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [F.QR_CODE, F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.CODE_93, F.ITF, F.CODABAR, F.DATA_MATRIX]);
+            } catch (e) {}
+            return hints;
+        }
         function makeQrHints() {
             const hints = new Map();
             try {
@@ -2694,34 +2965,72 @@ function doGet(e) {
         const escH = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
         const fmtMoney = n => (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const fmtDiff = n => (n > 0 ? '+' : n < 0 ? '−' : '') + fmtMoney(Math.abs(n));
+        const fmtNet = n => (n < 0 ? '−' : '') + fmtMoney(Math.abs(n));
         const fmtDate = s => { if (!s) return ''; const d = new Date(s + 'T00:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); };
 
-        const sheetMatch = l => { const s = (stmtCfg && stmtCfg.sheetId) || '__ALL__'; return s === '__ALL__' || l.formId === s || (!forms.find(f => f.id === l.formId) && (forms.find(f => f.id === s) || {}).name === l.formName); };
-        function scopeFields() { const s = (stmtCfg && stmtCfg.sheetId) || '__ALL__'; const f = forms.find(x => x.id === s); return f ? (f.fields || []) : allFormFields(); }
-        function fillSheetSelects() {
-            const cur = (stmtCfg && stmtCfg.sheetId) || '__ALL__';
-            const html = `<option value="__ALL__">All Sheets (${logs.length})</option>` + forms.map(f => `<option value="${escH(f.id)}">${escH(f.name)} (${logs.filter(l => l.formId === f.id).length})</option>`).join('');
-            ['ld-sheet', 'stmt-sheet'].forEach(id => { const el = document.getElementById(id); if (el) { el.innerHTML = html; el.value = forms.find(f => f.id === cur) ? cur : '__ALL__'; } });
+        const getSheetIds = () => { const c = stmtCfg || {}; if (Array.isArray(c.sheetIds)) return c.sheetIds; return (c.sheetId && c.sheetId !== '__ALL__') ? [c.sheetId] : []; };
+        const sheetMatch = l => { const ids = getSheetIds(); if (!ids.length) return true; return ids.some(sid => l.formId === sid || (!forms.find(f => f.id === l.formId) && (forms.find(f => f.id === sid) || {}).name === l.formName)); };
+        function scopeFields() {
+            const ids = getSheetIds().filter(i => forms.some(f => f.id === i));
+            if (!ids.length) return allFormFields();
+            const m = new Map(); ids.forEach(i => (forms.find(f => f.id === i).fields || []).forEach(fl => { if (!m.has(fl.label)) m.set(fl.label, fl); }));
+            return [...m.values()];
         }
-        function setSheetSelection(id) {
+        // ---- multi-select Data Entry Sheets (Ledger dashboard + Statement setup share the same selection) ----
+        const sheetMsOpen = { ld: false, stmt: false };
+        function fillSheetSelects() { renderSheetMs(); }
+        function renderSheetMs() {
+            [['ld', 'ld-sheet'], ['stmt', 'stmt-sheet']].forEach(([kind, id]) => {
+                const el = document.getElementById(id); if (!el) return;
+                const sel = getSheetIds().filter(i => forms.some(f => f.id === i)), compact = kind === 'ld';
+                const oldList = el.querySelector('.ms-list'), st = oldList ? oldList.scrollTop : 0;
+                const label = !sel.length ? `All Sheets (${logs.length})` : sel.length === 1 ? (forms.find(f => f.id === sel[0]) || {}).name : `${sel.length} sheets selected`;
+                const BT = 'bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-slate-700';
+                el.innerHTML = `<button type="button" onclick="toggleSheetMs('${kind}')" class="${compact ? 'text-xs px-2.5 py-1.5 min-w-[150px] max-w-[220px]' : 'text-sm px-2.5 py-2 w-full'} bg-slate-950 border border-slate-700 text-white rounded-lg flex items-center justify-between gap-2"><span class="truncate">${escH(label)}</span><i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i></button>
+                    <div class="${sheetMsOpen[kind] ? '' : 'hidden'} absolute z-30 mt-1 ${compact ? 'w-64' : 'w-full'} bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 space-y-1.5">
+                        <div class="flex gap-1.5 items-center"><button type="button" onclick="sheetMsClear()" class="${BT}">All sheets</button><span class="text-[10px] text-slate-500 ml-auto">${sel.length} selected</span></div>
+                        <div class="ms-list max-h-56 overflow-y-auto space-y-0.5">${forms.map(f => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" ${sel.includes(f.id) ? 'checked' : ''} onchange="sheetMsToggle('${escH(f.id)}', this.checked)"><span class="truncate">${escH(f.name)}</span><span class="ml-auto text-slate-500 font-mono">${logs.filter(l => l.formId === f.id).length}</span></label>`).join('')}</div>
+                    </div>`;
+                const nl = el.querySelector('.ms-list'); if (nl) nl.scrollTop = st;
+            });
+        }
+        function toggleSheetMs(kind) {
+            sheetMsOpen[kind] = !sheetMsOpen[kind];
+            const el = document.getElementById(kind === 'ld' ? 'ld-sheet' : 'stmt-sheet'), p = el && el.children[1];
+            if (p) p.classList.toggle('hidden', !sheetMsOpen[kind]);
+        }
+        function sheetMsToggle(id, on) { const set = new Set(getSheetIds()); on ? set.add(id) : set.delete(id); applySheetIds([...set]); }
+        function sheetMsClear() { applySheetIds([]); }
+        document.addEventListener('click', e => {
+            ['ld', 'stmt'].forEach(k => {
+                const el = document.getElementById(k === 'ld' ? 'ld-sheet' : 'stmt-sheet');
+                if (sheetMsOpen[k] && el && !el.contains(e.target)) { sheetMsOpen[k] = false; if (el.children[1]) el.children[1].classList.add('hidden'); }
+            });
+        });
+        function setSheetSelection(id) { applySheetIds(!id || id === '__ALL__' ? [] : [id]); }
+        function applySheetIds(ids) {
             if (!stmtCfg) loadStmtCfg();
-            stmtCfg.sheetId = id || '__ALL__';
-            ['unitField','amountField','dateField','refField','qtyField','rateField','desc','sub'].forEach(k => delete stmtCfg[k]);   // re-detect for the chosen sheet
+            ids = ids.filter(i => forms.some(f => f.id === i));
+            stmtCfg.sheetIds = ids; stmtCfg.sheetId = ids.length === 1 ? ids[0] : '__ALL__';
+            ['unitField','amountField','typeField','dateField','refField','qtyField','rateField','desc','sub'].forEach(k => delete stmtCfg[k]);   // re-detect for the chosen sheets
             try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
             loadStmtCfg();
             try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
             unitSel.ld = []; unitSel.stmt = [];
             if (stmtReady) { initStatementTab(); renderStatement(); }
             renderLedgerTable();
+            renderSheetMs();
         }
         function allFormFields() { const m = new Map(); forms.forEach(f => (f.fields || []).forEach(fl => { if (!m.has(fl.label)) m.set(fl.label, fl); })); return [...m.values()]; }
 
         function loadStmtCfg() {
             let c = {};
             try { c = JSON.parse(localStorage.getItem(STMT_KEY)) || {}; } catch (e) {}
-            stmtCfg = c; const fields = scopeFields();
+            stmtCfg = c;
+            c.sheetIds = getSheetIds().filter(i => forms.some(f => f.id === i)); c.sheetId = c.sheetIds.length === 1 ? c.sheetIds[0] : '__ALL__';
+            const fields = scopeFields();
             if (!c.unitField || !fields.find(f => f.label === c.unitField)) {
-                const g = fields.find(f => /^dt\b|unit|asset|truck|plate/i.test(f.label)) || fields.find(f => f.type === 'dropdown') || fields[0];
+                const g = fields.find(f => /^dt\b|unit|asset|truck|plate|^cashier$/i.test(f.label)) || fields.find(f => f.type === 'dropdown') || fields[0];
                 c.unitField = g ? g.label : '';
             }
             if (!c.amountField || !fields.find(f => f.label === c.amountField)) {
@@ -2735,6 +3044,9 @@ function doGet(e) {
             if (!keep('refField')) c.refField = find(/ticket|ref|\bno\b|number/i);
             if (!keep('qtyField')) c.qtyField = find(/capacity|qty|quantity|volume|load/i);
             if (!keep('rateField')) c.rateField = find(/rate|price/i);
+            if (!keep('typeField')) { const g = fields.find(f => !['numbers', 'number', 'computation'].includes(f.type) && /income|expense|revenue|\bcost\b|\btype\b|nature/i.test(f.label)); c.typeField = g ? g.label : ''; }
+            if (!c.incomeWords) c.incomeWords = 'revenue,income';
+            if (!c.costWords) c.costWords = 'cost,expense';
             c.desc = (Array.isArray(c.desc) ? c.desc : null);
             if (!c.desc || c.desc.some(x => x && !byLabel(x))) c.desc = [find(/^activity$/i), find(/^material$/i), ''];
             c.sub = (Array.isArray(c.sub) ? c.sub : null);
@@ -2745,7 +3057,7 @@ function doGet(e) {
             stmtCfg = c;
         }
         function resetStmtMapping() {
-            ['unitField','amountField','dateField','refField','qtyField','rateField','desc','sub'].forEach(k => delete stmtCfg[k]);
+            ['unitField','amountField','typeField','dateField','refField','qtyField','rateField','desc','sub'].forEach(k => delete stmtCfg[k]);
             try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
             initStatementTab();
         }
@@ -2771,6 +3083,8 @@ function doGet(e) {
             fillOpt('stmt-rate-field', fields, stmtCfg.rateField);
             [1, 2, 3].forEach(i => fillOpt('stmt-desc' + i + '-field', fields, stmtCfg.desc[i - 1]));
             [1, 2].forEach(i => fillOpt('stmt-sub' + i + '-field', fields, stmtCfg.sub[i - 1]));
+            fillOpt('stmt-type-field', fields.filter(f => !['numbers', 'number', 'computation'].includes(f.type) || f.label === stmtCfg.typeField), stmtCfg.typeField);
+            [['stmt-income-words', stmtCfg.incomeWords], ['stmt-cost-words', stmtCfg.costWords]].forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v || ''; });
             const set = (id, v) => { const el = document.getElementById(id); if (el && !stmtReady) el.value = v || ''; };
             set('stmt-billed-to', stmtCfg.billedTo); set('stmt-project', stmtCfg.project); set('stmt-remarks', stmtCfg.remarks);
             set('stmt-rev-name', stmtCfg.revName); set('stmt-rev-role', stmtCfg.revRole); set('stmt-app-name', stmtCfg.appName); set('stmt-app-role', stmtCfg.appRole); set('stmt-ver-name', stmtCfg.verName); set('stmt-ver-role', stmtCfg.verRole);
@@ -2784,6 +3098,7 @@ function doGet(e) {
             const gv = id => document.getElementById(id).value;
             stmtCfg.dateField = gv('stmt-date-field'); stmtCfg.refField = gv('stmt-ref-field');
             stmtCfg.qtyField = gv('stmt-qty-field'); stmtCfg.rateField = gv('stmt-rate-field');
+            stmtCfg.typeField = gv('stmt-type-field'); stmtCfg.incomeWords = gv('stmt-income-words'); stmtCfg.costWords = gv('stmt-cost-words');
             stmtCfg.desc = [gv('stmt-desc1-field'), gv('stmt-desc2-field'), gv('stmt-desc3-field')];
             stmtCfg.sub = [gv('stmt-sub1-field'), gv('stmt-sub2-field')];
             unitSel.stmt = [];
@@ -2798,19 +3113,40 @@ function doGet(e) {
             if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
             return String(log.timestamp || '').slice(0, 10);
         }
-        const getLogAmount = log => { const v = log.data ? log.data[stmtCfg.amountField] : 0; const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
-        const getLogMode = log => (stmtCfg && stmtCfg.modes && stmtCfg.modes[log.id] === 'ded') ? 'ded' : 'add';
+        const getLogAmount = log => {
+            const d = log.data || {}; let v = d[stmtCfg.amountField];
+            if (v === undefined) { const f = forms.find(x => x.id === log.formId); const nf = f ? (f.fields || []).filter(fl => ['computation', 'numbers'].includes(fl.type)) : []; let alt = null; for (const re of [/^total amount$/i, /^amount$/i, /amount/i, /total/i]) { alt = nf.find(fl => re.test(fl.label)); if (alt) break; } if (alt) v = d[alt.label]; }   // other sheet: use its own amount column
+            const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n;
+        };
+        // Income / expense: the Type column pre-sets Add (Revenue) or Deduct (Cost); each row can still be changed by hand
+        const getLogKind = log => {
+            if (!stmtCfg || !stmtCfg.typeField) return 'income';
+            const raw = String((log.data || {})[stmtCfg.typeField] == null ? '' : (log.data || {})[stmtCfg.typeField]).trim().toLowerCase();
+            if (!raw) return 'other';
+            const words = x => String(x || '').toLowerCase().split(',').map(w => w.trim()).filter(Boolean);
+            const inc = words(stmtCfg.incomeWords), cost = words(stmtCfg.costWords);
+            if (inc.includes(raw)) return 'income'; if (cost.includes(raw)) return 'cost';
+            if (inc.some(w => raw.includes(w))) return 'income'; if (cost.some(w => raw.includes(w))) return 'cost';
+            return 'other';
+        };
+        const getLogAutoMode = log => getLogKind(log) === 'cost' ? 'ded' : 'add';
+        const getLogMode = log => { const m = stmtCfg && stmtCfg.modes ? stmtCfg.modes[log.id] : null; return (m === 'ded' || m === 'add') ? m : getLogAutoMode(log); };
         const getLogSigned = log => (getLogMode(log) === 'ded' ? -1 : 1) * getLogAmount(log);
+        function setModeFor(log, mode) { if (mode === getLogAutoMode(log)) delete stmtCfg.modes[log.id]; else stmtCfg.modes[log.id] = mode; }
         function setLogMode(id, mode) {
-            if (mode === 'ded') stmtCfg.modes[id] = 'ded'; else delete stmtCfg.modes[id];
+            const l = logs.find(x => x.id === id); if (l) setModeFor(l, mode);
             saveStmtCfg(); renderStatement();
         }
         function setUnitMode(unit, mode) {
             const from = document.getElementById('stmt-from').value, to = document.getElementById('stmt-to').value;
-            logs.forEach(l => { if (l.status === 'VOID' || !sheetMatch(l) || getLogUnit(l) !== unit) return; const d = getLogDate(l); if ((from && d < from) || (to && d > to)) return; if (mode === 'ded') stmtCfg.modes[l.id] = 'ded'; else delete stmtCfg.modes[l.id]; });
+            logs.forEach(l => { if (l.status === 'VOID' || !sheetMatch(l) || getLogUnit(l) !== unit) return; const d = getLogDate(l); if ((from && d < from) || (to && d > to)) return; setModeFor(l, mode); });
             saveStmtCfg(); renderStatement();
         }
-        const getLogUnit = log => { const v = log.data ? log.data[stmtCfg.unitField] : ''; return String(v == null ? '' : v).trim() || '(Unassigned)'; };
+        const getLogUnit = log => {
+            let v = log.data ? log.data[stmtCfg.unitField] : '';
+            if (v === undefined && log.data && log.data.Cashier !== undefined && (forms.find(f => f.id === log.formId) || {}).pos) v = log.data.Cashier;   // POS sales group by cashier
+            return String(v == null ? '' : v).trim() || '(Unassigned)';
+        };
         const pad2 = n => String(n).padStart(2, '0');
         const isoDate = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
@@ -2874,6 +3210,15 @@ function doGet(e) {
             // Unit table (editable targets)
             document.getElementById('stmt-unit-table').innerHTML = S.chosen.length ? S.chosen.map(u => `<tr class="hover:bg-slate-800/40"><td class="p-3 text-blue-300 font-bold cursor-pointer" data-u="${escH(u.unit)}" onclick="unitSel.stmt=[this.dataset.u];renderStatement()">${escH(u.unit)}</td><td class="p-3 text-right">${u.rows.length}</td><td class="p-3 text-right ${u.amount < 0 ? 'text-rose-300' : 'text-emerald-300'}">${fmtMoney(u.amount)}</td><td class="p-3 text-right"><input type="number" step="0.01" value="${u.hasTarget ? u.target : ''}" placeholder="0.00" onchange="setUnitTarget('${escH(u.unit).replace(/'/g, "\\'")}', this.value)" class="w-32 bg-slate-950 border border-slate-700 text-white text-xs text-right rounded-lg px-2 py-1.5"></td><td class="p-3 text-right font-bold ${u.diff == null ? 'text-slate-500' : u.diff > 0 ? 'text-amber-400' : 'text-emerald-400'}">${u.diff == null ? '—' : fmtDiff(u.diff)}</td></tr>`).join('') : '<tr><td colspan="5" class="p-4 text-slate-500">No transactions in this coverage.</td></tr>';
 
+            const hint = document.getElementById('stmt-type-hint');
+            if (hint) {
+                if (!stmtCfg.typeField) hint.textContent = 'No type column selected: mark rows Add / Deduct by hand in the statement.';
+                else {
+                    const cnt = {}; logs.filter(l => sheetMatch(l) && l.status !== 'VOID').forEach(l => { const raw = String((l.data || {})[stmtCfg.typeField] == null ? '' : (l.data || {})[stmtCfg.typeField]).trim() || '(blank)'; const o = (cnt[raw] = cnt[raw] || { n: 0, k: getLogKind(l) }); o.n++; });
+                    const ents = Object.entries(cnt);
+                    hint.innerHTML = ents.length ? ents.map(([v, o]) => `${escH(v)} → ${o.k === 'cost' ? '<span class="text-rose-400">Deduction (−)</span>' : o.k === 'income' ? '<span class="text-emerald-400">Additional (+)</span>' : '<span class="text-amber-400">not matched (Additional)</span>'} · ${o.n}`).join('<br>') : 'No entries yet.';
+                }
+            }
             document.getElementById('stmt-preview').innerHTML = buildStatementDocHtml(S, false);
         }
 
@@ -2894,7 +3239,7 @@ function doGet(e) {
             const stmtNo = 'SOA-' + (S.to || isoDate(new Date())).replace(/-/g, '') + '-' + (S.sel === '__ALL__' ? 'ALL' : S.selList.length === 1 ? S.sel.replace(/[^A-Za-z0-9]/g, '') : S.selList.length + 'UNITS');
             const unitLabel = S.sel === '__ALL__' ? 'All Asset Units' : `${stmtCfg.unitField} ${S.sel}`;   // multiple units are comma-separated
             const c = stmtCfg;
-            const sheetName = (forms.find(f => f.id === c.sheetId) || {}).name || 'All Sheets';
+            const sheetName = (() => { const n = getSheetIds().map(i => (forms.find(f => f.id === i) || {}).name).filter(Boolean); return n.length ? n.join(', ') : 'All Sheets'; })();
             const sig = (title, name, role) => `<div class="sig"><div class="sigline">${escH(name) || '&nbsp;'}</div><div class="signame">${escH(title)}</div><div class="sigrole">${escH(role) || '&nbsp;'}</div><div class="sigdate">Date: ____________</div></div>`;
             const col = n => `<td class="num">${n}</td>`;
             const unitL = c.unitField || 'Asset Unit', amtL = c.amountField || 'Amount';
@@ -3718,6 +4063,237 @@ function doGet(e) {
             };
             reader.readAsText(file, 'utf-8');
         }
+
+        // ===== POS Entry: scanner -> inventory price -> Ledger + Google Sheet =====
+        const POS_FORM = { id: 'form_pos_sales', name: 'POS Sales', pos: true, fields: [
+            { id: 'pos_f_date', label: 'Date', type: 'date', required: false, hidden: false },
+            { id: 'pos_f_receipt', label: 'Receipt No', type: 'text', required: false, hidden: false },
+            { id: 'pos_f_cashier', label: 'Cashier', type: 'text', required: false, hidden: false },
+            { id: 'pos_f_items', label: 'Items', type: 'text', required: false, hidden: false },
+            { id: 'pos_f_count', label: 'Item Count', type: 'numbers', required: false, hidden: false },
+            { id: 'pos_f_sub', label: 'Subtotal', type: 'numbers', required: false, hidden: false },
+            { id: 'pos_f_disc', label: 'Discount', type: 'numbers', required: false, hidden: false },
+            { id: 'pos_f_tax', label: 'Tax', type: 'numbers', required: false, hidden: false },
+            { id: 'pos_f_total', label: 'Total Amount', type: 'numbers', required: false, hidden: false },
+            { id: 'pos_f_pay', label: 'Payment Method', type: 'dropdown', required: false, hidden: false, options: ['Cash', 'Card', 'GCash', 'Other'] },
+            { id: 'pos_f_tend', label: 'Amount Tendered', type: 'numbers', required: false, hidden: false },
+            { id: 'pos_f_change', label: 'Change', type: 'numbers', required: false, hidden: false }
+        ] };
+        function ensurePosForm() {
+            if (!forms.find(f => f.id === POS_FORM.id)) { forms.push(JSON.parse(JSON.stringify(POS_FORM))); try { localStorage.setItem('ullswater_forms', JSON.stringify(forms)); } catch (e) {} }
+        }
+        let posInventory = (() => { try { return JSON.parse(localStorage.getItem('ullswater_inventory')) || []; } catch (e) { return []; } })();
+        let posCart = [], posEditingId = null, posReader = null, posLast = { code: '', t: 0 }, posPendingCode = '', posInvEditId = null;
+        const posSaveInv = () => { try { localStorage.setItem('ullswater_inventory', JSON.stringify(posInventory)); } catch (e) {} };
+        const posMoney = n => (Number(n) || 0).toFixed(2);
+        const posVal = id => { const e = document.getElementById(id); return e ? e.value : ''; };
+        const posSet = (id, t) => { const e = document.getElementById(id); if (e) e.innerText = t; };
+        const posNorm = c => String(c == null ? '' : c).trim().replace(/^0+/, '').toLowerCase();
+        function posFind(code) {
+            const raw = String(code || '').trim().toLowerCase();
+            return posInventory.find(i => String(i.barcode).trim().toLowerCase() === raw) || posInventory.find(i => posNorm(i.barcode) && posNorm(i.barcode) === posNorm(code));
+        }
+        function posBeep(ok) {
+            try { const A = window.AudioContext || window.webkitAudioContext; if (!A) return; const c = new A(), o = c.createOscillator(), g = c.createGain(); o.frequency.value = ok ? 880 : 220; g.gain.value = 0.08; o.connect(g); g.connect(c.destination); o.start(); setTimeout(() => { o.stop(); c.close(); }, ok ? 90 : 220); } catch (e) {}
+        }
+        function posOpenTab() {
+            ensurePosForm(); posRenderAll(); posStartCamera();
+            if (!('ontouchstart' in window)) { const m = document.getElementById('pos-manual'); if (m) m.focus(); }
+        }
+        function posRenderAll() { posRenderCart(); posRenderRecent(); posInvRender(); }
+        function posUpdateCamBtn() { const b = document.getElementById('pos-cam-btn'); if (b) b.innerText = posReader ? 'Stop Camera' : 'Start Camera'; }
+        async function posStartCamera() {
+            if (posReader) return;
+            const st = document.getElementById('pos-status');
+            if (typeof ZXing === 'undefined') { if (st) st.innerText = 'Scanner library not loaded. Check your internet connection.'; return; }
+            if (activeCommsStream) stopWebcamFeed();
+            posReader = new ZXing.BrowserMultiFormatReader(makeBarcodeHints());
+            posUpdateCamBtn();
+            const ok = await startRearCameraScan(posReader, 'pos-video', 'pos-status', res => posHandleScan(res.getText()));
+            if (!ok) { try { posReader.reset(); } catch (e) {} posReader = null; }
+            posUpdateCamBtn();
+        }
+        function posStopCamera() {
+            if (!posReader) return;
+            try { posReader.reset(); } catch (e) {}
+            stopVideoElementStream('pos-video');
+            posReader = null;
+            const st = document.getElementById('pos-status'); if (st) st.innerText = 'Camera stopped';
+            posUpdateCamBtn();
+        }
+        function posToggleCamera() { if (posReader) posStopCamera(); else posStartCamera(); }
+        function posHandleScan(code) {
+            code = String(code || '').trim(); if (!code || posPendingCode) return;
+            const now = Date.now();
+            if (code === posLast.code && now - posLast.t < 1800) return;          // the camera re-reads the same code many times
+            posLast = { code, t: now };
+            posProcessCode(code, 1);
+        }
+        function posManualAdd() {
+            const inp = document.getElementById('pos-manual'); let v = (inp.value || '').trim(); if (!v || posPendingCode) return;
+            let qty = 1; const m = v.match(/^(\d+)\s*[x*]\s*(.+)$/i); if (m) { qty = Math.max(1, parseInt(m[1])); v = m[2].trim(); }
+            inp.value = ''; posProcessCode(v, qty); inp.focus();
+        }
+        function posProcessCode(code, qty) {
+            const item = posFind(code);
+            if (item) { posAddToCart(item, qty); return; }
+            posBeep(false); posPendingCode = code;
+            document.getElementById('pos-new-barcode').value = code;
+            document.getElementById('pos-new-name').value = ''; document.getElementById('pos-new-price').value = '';
+            document.getElementById('pos-new-panel').classList.remove('hidden');
+            document.getElementById('pos-new-name').focus();
+            posSet('pos-status', `Unknown barcode ${code} - enter a name and price`);
+        }
+        function posNewSave() {
+            const name = posVal('pos-new-name').trim(), price = parseFloat(posVal('pos-new-price'));
+            if (!name || isNaN(price) || price < 0) { showToast('Enter the item name and a valid price', 'error'); return; }
+            const item = { id: 'inv_' + Date.now().toString(36), barcode: posPendingCode, name, price, updatedAt: getLocalTimestamp(), priceLog: [{ t: getLocalTimestamp(), price, by: activeUser || 'admin' }] };
+            posInventory.push(item); posSaveInv();
+            posNewCancel(); posAddToCart(item, 1); posInvRender();
+        }
+        function posNewCancel() { posPendingCode = ''; document.getElementById('pos-new-panel').classList.add('hidden'); }
+        function posAddToCart(item, qty) {
+            const line = posCart.find(l => l.barcode === item.barcode);
+            if (line) line.qty += qty; else posCart.push({ barcode: item.barcode, name: item.name, price: Number(item.price) || 0, qty });
+            posBeep(true); posSet('pos-status', `Added: ${item.name} @ ${posMoney(item.price)}`);
+            posRenderCart();
+        }
+        function posChangeQty(i, d) { if (!posCart[i]) return; posCart[i].qty = Math.max(1, posCart[i].qty + d); posRenderCart(); }
+        function posSetQty(i, v) { if (!posCart[i]) return; posCart[i].qty = Math.max(1, parseInt(v) || 1); posRenderCart(); }
+        function posSetPrice(i, v) { if (!posCart[i]) return; posCart[i].price = Math.max(0, parseFloat(v) || 0); posRenderCart(); }
+        function posRemoveLine(i) { posCart.splice(i, 1); posRenderCart(); }
+        function posTotals() {
+            const sub = posCart.reduce((a, l) => a + l.price * l.qty, 0);
+            const disc = Math.min(sub, Math.max(0, parseFloat(posVal('pos-discount')) || 0));
+            const taxPct = Math.max(0, parseFloat(posVal('pos-tax')) || 0);
+            const tax = (sub - disc) * taxPct / 100, total = sub - disc + tax;
+            const raw = posVal('pos-tendered'), tendered = raw === '' ? null : (parseFloat(raw) || 0);
+            return { sub, disc, taxPct, tax, total, tendered, change: tendered == null ? 0 : Math.max(0, tendered - total), qty: posCart.reduce((a, l) => a + l.qty, 0) };
+        }
+        function posRecalc() { const t = posTotals(); posSet('pos-subtotal', posMoney(t.sub)); posSet('pos-total', posMoney(t.total)); posSet('pos-change', posMoney(t.change)); posSet('pos-count', String(t.qty)); }
+        function posRenderCart() {
+            const body = document.getElementById('pos-cart-body'); if (!body) return;
+            body.innerHTML = posCart.length ? posCart.map((l, i) => `<tr class="border-b border-slate-800/60">
+                <td class="p-2.5"><div class="font-semibold text-white text-xs">${escH(l.name)}</div><div class="text-[10px] text-slate-500 font-mono">${escH(l.barcode)}</div></td>
+                <td class="p-2.5 text-right"><input type="number" step="0.01" min="0" value="${l.price}" onchange="posSetPrice(${i}, this.value)" class="w-20 bg-slate-950 border border-slate-700 text-white text-xs text-right rounded-lg px-2 py-1"></td>
+                <td class="p-2.5"><div class="flex items-center justify-end gap-1"><button onclick="posChangeQty(${i}, -1)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 w-6 h-6 rounded-lg">−</button><input type="number" min="1" step="1" value="${l.qty}" onchange="posSetQty(${i}, this.value)" class="w-12 bg-slate-950 border border-slate-700 text-white text-xs text-center rounded-lg px-1 py-1"><button onclick="posChangeQty(${i}, 1)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 w-6 h-6 rounded-lg">+</button></div></td>
+                <td class="p-2.5 text-right font-mono text-emerald-300">${posMoney(l.price * l.qty)}</td>
+                <td class="p-2.5 text-right"><button onclick="posRemoveLine(${i})" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button></td></tr>`).join('')
+                : '<tr><td colspan="5" class="p-6 text-center text-xs text-slate-500">Scan an item or type a barcode to start the sale.</td></tr>';
+            posRecalc();
+        }
+        function posResetSale() {
+            posCart = []; posEditingId = null;
+            ['pos-tendered'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+            document.getElementById('pos-discount').value = '0'; document.getElementById('pos-tax').value = '0'; document.getElementById('pos-payment').value = 'Cash';
+            document.getElementById('pos-edit-banner').classList.add('hidden'); posSet('pos-save-label', 'Save Sale');
+            posRenderCart();
+        }
+        function posSaveSale() {
+            if (!posCart.length) { showToast('Cart is empty - scan an item first', 'error'); return; }
+            const t = posTotals();
+            if (t.tendered != null && t.tendered + 0.005 < t.total) { showToast('Amount tendered is less than the total', 'error'); return; }
+            ensurePosForm();
+            const method = posVal('pos-payment') || 'Cash';
+            const lines = posCart.map(l => ({ barcode: l.barcode, name: l.name, price: l.price, qty: l.qty }));
+            const build = (receipt, dateStr) => ({ 'Date': dateStr, 'Receipt No': receipt, 'Cashier': activeUser || 'admin',
+                'Items': lines.map(l => `${l.qty} x ${l.name} @ ${posMoney(l.price)}`).join(' | '), 'Item Count': String(t.qty),
+                'Subtotal': posMoney(t.sub), 'Discount': posMoney(t.disc), 'Tax': posMoney(t.tax), 'Total Amount': posMoney(t.total), 'Payment Method': method,
+                'Amount Tendered': posMoney(t.tendered == null ? t.total : t.tendered), 'Change': posMoney(t.tendered == null ? 0 : t.change) });
+            const meta = { lines, discount: t.disc, taxPct: t.taxPct, payment: method, tendered: t.tendered };
+            if (posEditingId) {
+                const log = logs.find(l => l.id === posEditingId);
+                if (!log) { showToast('That sale no longer exists', 'error'); posResetSale(); return; }
+                log.data = build(log.id, (log.data || {}).Date || isoDate(new Date())); log.pos = meta;
+                log.editedBy = activeUser || 'admin'; log.editedAt = getLocalTimestamp(); log._dirtyAt = Date.now();
+                localStorage.setItem('ullswater_logs', JSON.stringify(logs));
+                renderLedgerTable(); postLogToGoogleSheet(log, log.formName); posRenderRecent();
+                showToast(`Sale ${log.id} updated`, 'success'); posResetSale(); return;
+            }
+            let id; do { id = 'POS-' + new Date().getFullYear() + '-' + String(Math.floor(1000 + Math.random() * 9000)); } while (logs.some(l => l.id === id));
+            const form = forms.find(f => f.id === POS_FORM.id) || POS_FORM;
+            const log = { id, timestamp: getLocalTimestamp(), user: activeUser || 'admin', formName: form.name, formId: form.id, data: build(id, isoDate(new Date())), status: 'VALID', sourceTicket: '', pos: meta };
+            logs.unshift(log);
+            localStorage.setItem('ullswater_logs', JSON.stringify(logs));
+            renderLedgerTable(); updateSidebarStats(); postLogToGoogleSheet(log, log.formName); posRenderRecent();
+            showToast(`Sale ${id} saved - total ${posMoney(t.total)}`, 'success');
+            posResetSale();
+        }
+        function posRenderRecent() {
+            const body = document.getElementById('pos-recent-body'); if (!body) return;
+            const list = logs.filter(l => l.formId === POS_FORM.id).slice(0, 15);
+            body.innerHTML = list.length ? list.map(l => { const d = l.data || {}, v = l.status === 'VOID';
+                return `<tr class="${v ? 'opacity-60' : ''}"><td class="p-3 font-bold text-blue-300 font-mono">${escH(l.id)}</td><td class="p-3 text-slate-400">${escH(l.timestamp)}</td><td class="p-3">@${escH(l.user)}</td><td class="p-3 max-w-[260px] truncate" title="${escH(d.Items || '')}">${escH(d.Items || '')}</td><td class="p-3 text-right font-mono ${v ? 'line-through text-slate-500' : 'text-emerald-300'}">${escH(d['Total Amount'] || '0.00')}</td><td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${v ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300'}">${v ? 'VOID' : 'VALID'}</span></td>
+                <td class="p-3 text-right whitespace-nowrap"><button onclick="openTicketModal('${escH(l.id)}')" title="Receipt" class="text-slate-300 hover:text-white px-1.5"><i class="fa-solid fa-receipt"></i></button><button onclick="posEditSale('${escH(l.id)}')" title="Edit" class="text-amber-300 hover:text-amber-200 px-1.5"><i class="fa-solid fa-pen"></i></button><button onclick="posVoidSale('${escH(l.id)}')" title="${v ? 'Restore' : 'Void'}" class="text-cyan-300 hover:text-cyan-200 px-1.5"><i class="fa-solid ${v ? 'fa-rotate-left' : 'fa-ban'}"></i></button><button onclick="posRemoveSale('${escH(l.id)}')" title="Remove" class="text-rose-400 hover:text-rose-300 px-1.5"><i class="fa-solid fa-trash-can"></i></button></td></tr>`; }).join('')
+                : '<tr><td colspan="7" class="p-5 text-center text-slate-500">No POS sales yet.</td></tr>';
+        }
+        function posEditSale(id) {
+            const log = logs.find(l => l.id === id); if (!log) return;
+            if (!log.pos || !log.pos.lines) { showToast('This sale has no line items - edit its values from the Ledger instead', 'error'); return; }
+            posCart = JSON.parse(JSON.stringify(log.pos.lines)); posEditingId = id;
+            document.getElementById('pos-discount').value = log.pos.discount || 0; document.getElementById('pos-tax').value = log.pos.taxPct || 0;
+            document.getElementById('pos-payment').value = log.pos.payment || 'Cash';
+            document.getElementById('pos-tendered').value = log.pos.tendered == null ? '' : log.pos.tendered;
+            posSet('pos-edit-label', id); document.getElementById('pos-edit-banner').classList.remove('hidden'); posSet('pos-save-label', 'Update Sale');
+            posRenderCart(); document.getElementById('tab-pos').scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        function posVoidSale(id) { toggleVoidEntry(id); posRenderRecent(); }
+        function posRemoveSale(id) { deleteLedgerEntry(id); if (!logs.find(l => l.id === id) && posEditingId === id) posResetSale(); posRenderRecent(); }
+
+        // ---- Inventory ----
+        function posInvRender() {
+            const body = document.getElementById('pos-inv-body'); if (!body) return;
+            const q = posVal('pos-inv-search').trim().toLowerCase();
+            const list = posInventory.filter(i => !q || String(i.barcode).toLowerCase().includes(q) || String(i.name).toLowerCase().includes(q));
+            posSet('pos-inv-count', `(${posInventory.length} items)`);
+            body.innerHTML = list.length ? list.map(i => `<tr><td class="p-3 font-mono text-blue-300">${escH(i.barcode)}</td><td class="p-3 text-white">${escH(i.name)}</td><td class="p-3 text-right font-mono text-emerald-300">${posMoney(i.price)}</td><td class="p-3 text-slate-400" title="${escH((i.priceLog || []).map(p => p.t + ': ' + posMoney(p.price)).join('\n'))}">${escH(i.updatedAt || '')} <span class="text-slate-600">(${(i.priceLog || []).length})</span></td><td class="p-3 text-right whitespace-nowrap"><button onclick="posInvEdit('${escH(i.id)}')" class="text-amber-300 hover:text-amber-200 px-1.5"><i class="fa-solid fa-pen"></i></button><button onclick="posInvDelete('${escH(i.id)}')" class="text-rose-400 hover:text-rose-300 px-1.5"><i class="fa-solid fa-trash-can"></i></button></td></tr>`).join('')
+                : '<tr><td colspan="5" class="p-5 text-center text-slate-500">No inventory items. Add one above, import a CSV, or scan an unknown barcode in the sale.</td></tr>';
+        }
+        function posInvLog(item, price) { item.priceLog = item.priceLog || []; item.priceLog.push({ t: getLocalTimestamp(), price, by: activeUser || 'admin' }); item.updatedAt = getLocalTimestamp(); }
+        function posInvSave() {
+            const barcode = posVal('field_posinv_barcode').trim(), name = posVal('pos-inv-name').trim(), price = parseFloat(posVal('pos-inv-price'));
+            if (!barcode || !name || isNaN(price) || price < 0) { showToast('Barcode, item name and a valid price are required', 'error'); return; }
+            let item = posInvEditId ? posInventory.find(i => i.id === posInvEditId) : null;
+            if (!item) { const dup = posFind(barcode); if (dup) { item = dup; showToast('Barcode already exists - updated that item', 'success'); } }
+            if (item) { if (Number(item.price) !== price) posInvLog(item, price); item.barcode = barcode; item.name = name; item.price = price; item.updatedAt = getLocalTimestamp(); }
+            else { item = { id: 'inv_' + Date.now().toString(36), barcode, name, price, updatedAt: getLocalTimestamp(), priceLog: [{ t: getLocalTimestamp(), price, by: activeUser || 'admin' }] }; posInventory.push(item); }
+            posSaveInv(); posInvCancel(); posInvRender();
+        }
+        function posInvEdit(id) {
+            const i = posInventory.find(x => x.id === id); if (!i) return;
+            posInvEditId = id; document.getElementById('field_posinv_barcode').value = i.barcode; document.getElementById('pos-inv-name').value = i.name; document.getElementById('pos-inv-price').value = i.price;
+            posSet('pos-inv-save-btn', 'Update Item');
+        }
+        function posInvCancel() { posInvEditId = null; ['field_posinv_barcode', 'pos-inv-name', 'pos-inv-price'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; }); posSet('pos-inv-save-btn', 'Add Item'); }
+        function posInvDelete(id) { const i = posInventory.find(x => x.id === id); if (!i || !confirm(`Delete "${i.name}" from the inventory?`)) return; posInventory = posInventory.filter(x => x.id !== id); posSaveInv(); posInvRender(); }
+        function posScanInvBarcode() { posStopCamera(); openScannerModal('posinv_barcode'); }
+        function posInvExport() {
+            if (!posInventory.length) { showToast('Inventory is empty', 'error'); return; }
+            const rows = [['Barcode', 'Name', 'Price']].concat(posInventory.map(i => [i.barcode, i.name, posMoney(i.price)]));
+            downloadCSV('\ufeff' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n', 'Ullswater_Inventory_' + isoDate(new Date()) + '.csv');
+        }
+        function posInvImport(e) {
+            const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = evt => {
+                try {
+                    const rows = parseCSVText(String(evt.target.result)); if (rows.length < 2) { showToast('CSV has no data rows', 'error'); return; }
+                    const head = rows[0].map(h => h.trim().toLowerCase()), ib = head.indexOf('barcode'), inm = head.indexOf('name'), ip = head.indexOf('price');
+                    if (ib < 0 || inm < 0 || ip < 0) { showToast('CSV needs the columns: Barcode, Name, Price', 'error'); return; }
+                    let add = 0, upd = 0;
+                    rows.slice(1).forEach(r => {
+                        const barcode = String(r[ib] || '').trim(), name = String(r[inm] || '').trim(), price = parseFloat(String(r[ip] || '').replace(/[^0-9.\-]/g, ''));
+                        if (!barcode || !name || isNaN(price)) return;
+                        const ex = posFind(barcode);
+                        if (ex) { if (Number(ex.price) !== price) posInvLog(ex, price); ex.name = name; ex.price = price; upd++; }
+                        else { posInventory.push({ id: 'inv_' + Date.now().toString(36) + add, barcode, name, price, updatedAt: getLocalTimestamp(), priceLog: [{ t: getLocalTimestamp(), price, by: activeUser || 'admin' }] }); add++; }
+                    });
+                    posSaveInv(); posInvRender(); showToast(`Inventory imported: ${add} added, ${upd} updated`, 'success');
+                } catch (err) { showToast('Inventory import failed: ' + (err && err.message ? err.message : err), 'error'); }
+            };
+            reader.readAsText(file, 'utf-8');
+        }
+
         function wipeAllData() { logs = []; localStorage.removeItem('ullswater_logs'); renderLedgerTable(); }
         function updateSidebarStats() { document.getElementById('sidebar-queue').innerText = logs.length + ' Tickets'; }
 
