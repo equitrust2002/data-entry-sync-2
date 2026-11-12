@@ -2741,6 +2741,7 @@ function doGet(e) {
             if (!c.sub || c.sub.some(x => x && !byLabel(x))) c.sub = [find(/source/i), find(/dump|destination/i)];
             while (c.desc.length < 3) c.desc.push(''); while (c.sub.length < 2) c.sub.push('');
             c.targets = c.targets || {};
+            c.modes = c.modes || {};
             stmtCfg = c;
         }
         function resetStmtMapping() {
@@ -2798,6 +2799,17 @@ function doGet(e) {
             return String(log.timestamp || '').slice(0, 10);
         }
         const getLogAmount = log => { const v = log.data ? log.data[stmtCfg.amountField] : 0; const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
+        const getLogMode = log => (stmtCfg && stmtCfg.modes && stmtCfg.modes[log.id] === 'ded') ? 'ded' : 'add';
+        const getLogSigned = log => (getLogMode(log) === 'ded' ? -1 : 1) * getLogAmount(log);
+        function setLogMode(id, mode) {
+            if (mode === 'ded') stmtCfg.modes[id] = 'ded'; else delete stmtCfg.modes[id];
+            saveStmtCfg(); renderStatement();
+        }
+        function setUnitMode(unit, mode) {
+            const from = document.getElementById('stmt-from').value, to = document.getElementById('stmt-to').value;
+            logs.forEach(l => { if (l.status === 'VOID' || !sheetMatch(l) || getLogUnit(l) !== unit) return; const d = getLogDate(l); if ((from && d < from) || (to && d > to)) return; if (mode === 'ded') stmtCfg.modes[l.id] = 'ded'; else delete stmtCfg.modes[l.id]; });
+            saveStmtCfg(); renderStatement();
+        }
         const getLogUnit = log => { const v = log.data ? log.data[stmtCfg.unitField] : ''; return String(v == null ? '' : v).trim() || '(Unassigned)'; };
         const pad2 = n => String(n).padStart(2, '0');
         const isoDate = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -2818,7 +2830,7 @@ function doGet(e) {
             const inRange = logs.filter(l => { const d = getLogDate(l); return sheetMatch(l) && (!from || d >= from) && (!to || d <= to); });
             const live = inRange.filter(l => { if (l.status === 'VOID') { voided++; return false; } return true; });
             const units = {};
-            live.forEach(l => { const u = getLogUnit(l); (units[u] = units[u] || { unit: u, rows: [], amount: 0 }); units[u].rows.push(l); units[u].amount += getLogAmount(l); });
+            live.forEach(l => { const u = getLogUnit(l); (units[u] = units[u] || { unit: u, rows: [], amount: 0 }); units[u].rows.push(l); units[u].amount += getLogSigned(l); });
             const unitList = Object.values(units).sort((a, b) => a.unit.localeCompare(b.unit, undefined, { numeric: true }));
             const chosen = selList.length ? unitList.filter(u => selList.includes(u.unit)) : unitList;
             chosen.forEach(u => { u.rows.sort((a, b) => getLogDate(a).localeCompare(getLogDate(b)) || String(a.id).localeCompare(String(b.id))); u.target = stmtCfg.targets[u.unit]; u.hasTarget = u.target !== undefined && u.target !== '' && !isNaN(parseFloat(u.target)); u.diff = u.hasTarget ? u.amount - parseFloat(u.target) : null; });
@@ -2826,7 +2838,9 @@ function doGet(e) {
             const tgtUnits = chosen.filter(u => u.hasTarget);
             const tgt = tgtUnits.reduce((s, u) => s + parseFloat(u.target), 0);
             const diff = tgtUnits.length ? tgtUnits.reduce((s, u) => s + u.diff, 0) : null;
-            return { from, to, sel: selList.length ? selList.join(', ') : '__ALL__', selList, unitList, chosen, tx, amt, tgt, diff, voided, hasTarget: tgtUnits.length > 0 };
+            let addT = 0, dedT = 0, nDed = 0;
+            chosen.forEach(u => u.rows.forEach(l => { const a = getLogAmount(l); if (getLogMode(l) === 'ded') { dedT += a; nDed++; } else addT += a; }));
+            return { addT, dedT, nDed, from, to, sel: selList.length ? selList.join(', ') : '__ALL__', selList, unitList, chosen, tx, amt, tgt, diff, voided, hasTarget: tgtUnits.length > 0 };
         }
 
         function renderStatement() {
@@ -2843,22 +2857,22 @@ function doGet(e) {
             const kpi = (label, val, icon, color) => `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-4"><div class="flex items-center justify-between"><span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">${label}</span><i class="fa-solid ${icon} ${color}"></i></div><div class="text-xl font-bold text-white mt-1.5 font-mono truncate">${val}</div></div>`;
             const diffColor = S.diff == null ? 'text-slate-400' : S.diff > 0 ? 'text-amber-400' : 'text-emerald-400';
             document.getElementById('stmt-kpis').innerHTML =
-                kpi('Total Amount', fmtMoney(S.amt), 'fa-coins', 'text-emerald-400') +
+                kpi(S.nDed ? 'Net Total' : 'Total Amount', fmtMoney(S.amt), 'fa-coins', 'text-emerald-400') +
                 kpi('Transactions', S.tx.toLocaleString(), 'fa-receipt', 'text-blue-400') +
                 kpi('Asset Units', S.chosen.length, 'fa-truck', 'text-amber-400') +
                 `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-4"><div class="flex items-center justify-between"><span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Difference vs Target</span><i class="fa-solid fa-scale-balanced ${diffColor}"></i></div><div class="text-xl font-bold mt-1.5 font-mono truncate ${diffColor}">${S.diff == null ? '—' : fmtDiff(S.diff)}</div></div>`;
 
             // Unit bars
-            const max = Math.max(1, ...S.chosen.map(u => u.amount));
-            document.getElementById('stmt-chart-units').innerHTML = S.chosen.length ? S.chosen.map(u => `<div><div class="flex justify-between text-[11px] text-slate-300 mb-0.5"><span>${escH(u.unit)}</span><span class="font-mono">${fmtMoney(u.amount)}</span></div><div class="h-2.5 bg-slate-800 rounded-full overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width:${Math.max(2, u.amount / max * 100)}%"></div></div></div>`).join('') : '<p class="text-xs text-slate-500">No transactions in this coverage.</p>';
+            const max = Math.max(1, ...S.chosen.map(u => Math.abs(u.amount)));
+            document.getElementById('stmt-chart-units').innerHTML = S.chosen.length ? S.chosen.map(u => `<div><div class="flex justify-between text-[11px] text-slate-300 mb-0.5"><span>${escH(u.unit)}</span><span class="font-mono">${fmtMoney(u.amount)}</span></div><div class="h-2.5 bg-slate-800 rounded-full overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width:${Math.max(2, Math.abs(u.amount) / max * 100)}%"></div></div></div>`).join('') : '<p class="text-xs text-slate-500">No transactions in this coverage.</p>';
 
             // Daily trend
-            const days = {}; S.chosen.forEach(u => u.rows.forEach(l => { const d = getLogDate(l); days[d] = (days[d] || 0) + getLogAmount(l); }));
-            const dk = Object.keys(days).sort(), dmax = Math.max(1, ...Object.values(days));
-            document.getElementById('stmt-chart-days').innerHTML = dk.length ? dk.map(d => `<div class="flex flex-col items-center justify-end h-full min-w-[22px] flex-1" title="${fmtDate(d)}: ${fmtMoney(days[d])}"><div class="w-full bg-emerald-500/80 rounded-t" style="height:${Math.max(3, days[d] / dmax * 100)}%"></div><span class="text-[8px] text-slate-500 mt-1">${d.slice(8)}</span></div>`).join('') : '<p class="text-xs text-slate-500">No data.</p>';
+            const days = {}; S.chosen.forEach(u => u.rows.forEach(l => { const d = getLogDate(l); days[d] = (days[d] || 0) + getLogSigned(l); }));
+            const dk = Object.keys(days).sort(), dmax = Math.max(1, ...Object.values(days).map(Math.abs));
+            document.getElementById('stmt-chart-days').innerHTML = dk.length ? dk.map(d => `<div class="flex flex-col items-center justify-end h-full min-w-[22px] flex-1" title="${fmtDate(d)}: ${fmtMoney(days[d])}"><div class="w-full ${days[d] < 0 ? 'bg-rose-500/80' : 'bg-emerald-500/80'} rounded-t" style="height:${Math.max(3, Math.abs(days[d]) / dmax * 100)}%"></div><span class="text-[8px] text-slate-500 mt-1">${d.slice(8)}</span></div>`).join('') : '<p class="text-xs text-slate-500">No data.</p>';
 
             // Unit table (editable targets)
-            document.getElementById('stmt-unit-table').innerHTML = S.chosen.length ? S.chosen.map(u => `<tr class="hover:bg-slate-800/40"><td class="p-3 text-blue-300 font-bold cursor-pointer" data-u="${escH(u.unit)}" onclick="unitSel.stmt=[this.dataset.u];renderStatement()">${escH(u.unit)}</td><td class="p-3 text-right">${u.rows.length}</td><td class="p-3 text-right text-emerald-300">${fmtMoney(u.amount)}</td><td class="p-3 text-right"><input type="number" step="0.01" value="${u.hasTarget ? u.target : ''}" placeholder="0.00" onchange="setUnitTarget('${escH(u.unit).replace(/'/g, "\\'")}', this.value)" class="w-32 bg-slate-950 border border-slate-700 text-white text-xs text-right rounded-lg px-2 py-1.5"></td><td class="p-3 text-right font-bold ${u.diff == null ? 'text-slate-500' : u.diff > 0 ? 'text-amber-400' : 'text-emerald-400'}">${u.diff == null ? '—' : fmtDiff(u.diff)}</td></tr>`).join('') : '<tr><td colspan="5" class="p-4 text-slate-500">No transactions in this coverage.</td></tr>';
+            document.getElementById('stmt-unit-table').innerHTML = S.chosen.length ? S.chosen.map(u => `<tr class="hover:bg-slate-800/40"><td class="p-3 text-blue-300 font-bold cursor-pointer" data-u="${escH(u.unit)}" onclick="unitSel.stmt=[this.dataset.u];renderStatement()">${escH(u.unit)}</td><td class="p-3 text-right">${u.rows.length}</td><td class="p-3 text-right ${u.amount < 0 ? 'text-rose-300' : 'text-emerald-300'}">${fmtMoney(u.amount)}</td><td class="p-3 text-right"><input type="number" step="0.01" value="${u.hasTarget ? u.target : ''}" placeholder="0.00" onchange="setUnitTarget('${escH(u.unit).replace(/'/g, "\\'")}', this.value)" class="w-32 bg-slate-950 border border-slate-700 text-white text-xs text-right rounded-lg px-2 py-1.5"></td><td class="p-3 text-right font-bold ${u.diff == null ? 'text-slate-500' : u.diff > 0 ? 'text-amber-400' : 'text-emerald-400'}">${u.diff == null ? '—' : fmtDiff(u.diff)}</td></tr>`).join('') : '<tr><td colspan="5" class="p-4 text-slate-500">No transactions in this coverage.</td></tr>';
 
             document.getElementById('stmt-preview').innerHTML = buildStatementDocHtml(S, false);
         }
@@ -2898,12 +2912,18 @@ function doGet(e) {
             } });
             if (c.qtyField) cols.push({ h: c.qtyField, w: 9, al: 'r', cell: l => escH((l.data || {})[c.qtyField] || '') });
             if (c.rateField) cols.push({ h: c.rateField, w: 11, al: 'r', cell: l => numOrRaw((l.data || {})[c.rateField]) });
-            cols.push({ h: amtL, w: 14, al: 'r', cell: l => `<span class="strong">${fmtMoney(getLogAmount(l))}</span>` });
+            cols.push({ h: 'Add / Deduct', w: forPrint ? 11 : 16, al: 'c', cell: l => {
+                const m = getLogMode(l);
+                if (forPrint) return m === 'ded' ? '<span style="color:#b91c1c;font-weight:700">Deduction</span>' : '<span style="color:#047857;font-weight:700">Additional</span>';
+                const idq = escH(String(l.id)).replace(/'/g, "\\'");
+                return `<select onchange="setLogMode('${idq}', this.value)" style="font-size:10px;padding:2px 3px;border:1px solid #9aa8ba;border-radius:4px;background:${m === 'ded' ? '#fee2e2' : '#d1fae5'};color:#111"><option value="add" ${m === 'add' ? 'selected' : ''}>+ Additional</option><option value="ded" ${m === 'ded' ? 'selected' : ''}>− Deduction</option></select>`;
+            } });
+            cols.push({ h: amtL, w: 14, al: 'r', cell: l => { const a = getLogAmount(l); return getLogMode(l) === 'ded' ? `<span class="strong" style="color:#b91c1c">(${fmtMoney(a)})</span>` : `<span class="strong">${fmtMoney(a)}</span>`; } });
             const nC = cols.length;
             const summaryRows = S.chosen.map(u => `<tr><td>${escH(u.unit)}</td>${col(u.rows.length)}${col(fmtMoney(u.amount))}${col(u.hasTarget ? fmtMoney(u.target) : '—')}${col(u.diff == null ? '—' : fmtDiff(u.diff))}</tr>`).join('');
             const detail = S.chosen.map(u => {
                 const rows = u.rows.map(l => `<tr>${cols.map(k => `<td class="a-${k.al}">${k.cell(l)}</td>`).join('')}</tr>`).join('');
-                return `<tr class="grp"><td colspan="${nC}">${escH(unitL)}: ${escH(u.unit)}</td></tr>${rows}<tr class="subtot"><td colspan="${nC - 1}" class="a-r">Subtotal – ${escH(u.unit)} (${u.rows.length} transaction${u.rows.length === 1 ? '' : 's'})</td><td class="a-r">${fmtMoney(u.amount)}</td></tr>`;
+                return `<tr class="grp"><td colspan="${nC}">${escH(unitL)}: ${escH(u.unit)}${forPrint ? '' : `<span style="float:right;font-weight:400;font-size:10px">Mark all as: <select onchange="if(this.value)setUnitMode(this.dataset.u,this.value)" data-u="${escH(u.unit)}" style="font-size:10px;padding:1px 3px;border:1px solid #9aa8ba;border-radius:4px"><option value="">— choose —</option><option value="add">+ Additional</option><option value="ded">− Deduction</option></select></span>`}</td></tr>${rows}<tr class="subtot"><td colspan="${nC - 1}" class="a-r">Net Subtotal – ${escH(u.unit)} (${u.rows.length} transaction${u.rows.length === 1 ? '' : 's'})</td><td class="a-r">${u.amount < 0 ? '(' + fmtMoney(-u.amount) + ')' : fmtMoney(u.amount)}</td></tr>`;
             }).join('');
             const detailHead = cols.map(k => `<th class="a-${k.al}">${escH(k.h)}</th>`).join('');
             const detailColgroup = '<colgroup>' + cols.map(k => k.w ? `<col style="width:${k.w}%">` : '<col>').join('') + '</colgroup>';
@@ -2919,11 +2939,12 @@ function doGet(e) {
   <div class="sec">Account Summary</div>
   <table class="grid summary">${summaryColgroup}<thead><tr><th>${escH(unitL)}</th><th class="num">Transactions</th><th class="num">Actual ${escH(amtL)}</th><th class="num">Target Amount</th><th class="num">Difference</th></tr></thead><tbody>${summaryRows || '<tr><td colspan="5" class="empty">No transactions in this coverage.</td></tr>'}</tbody>
   <tfoot><tr><td>TOTAL</td>${col(S.tx)}${col(fmtMoney(S.amt))}${col(S.hasTarget ? fmtMoney(S.tgt) : '—')}${col(S.diff == null ? '—' : fmtDiff(S.diff))}</tr></tfoot></table>
-  <div class="note">Difference = Actual Amount − Target Amount. A positive figure is over target; a negative figure is under target.${S.voided ? ` ${S.voided} voided ticket${S.voided === 1 ? '' : 's'} excluded.` : ''}</div>
+  <div class="note">Actual Amount is net of any items marked as deductions. Difference = Actual Amount − Target Amount. A positive figure is over target; a negative figure is under target.${S.voided ? ` ${S.voided} voided ticket${S.voided === 1 ? '' : 's'} excluded.` : ''}</div>
 
   <div class="sec">Transaction Details</div>
   <table class="grid detail">${detailColgroup}<thead><tr>${detailHead}</tr></thead><tbody>${detail || `<tr><td colspan="${nC}" class="empty">No transactions in this coverage.</td></tr>`}</tbody>
-  <tfoot><tr><td colspan="${nC - 1}" class="a-r">GRAND TOTAL</td><td class="a-r">${fmtMoney(S.amt)}</td></tr></tfoot></table>
+  <tfoot><tr><td colspan="${nC - 1}" class="a-r">${S.nDed ? 'NET GRAND TOTAL' : 'GRAND TOTAL'}</td><td class="a-r">${S.amt < 0 ? '(' + fmtMoney(-S.amt) + ')' : fmtMoney(S.amt)}</td></tr></tfoot></table>
+  ${S.nDed ? `<table class="meta" style="margin-top:6px"><tr><td><b>Total Additional</b></td><td style="text-align:right">${fmtMoney(S.addT)}</td><td><b>Total Deductions</b></td><td style="text-align:right">(${fmtMoney(S.dedT)})</td><td><b>Net Total</b></td><td style="text-align:right"><b>${fmtMoney(S.amt)}</b></td></tr></table>` : ''}
 
   ${c.remarks ? `<div class="sec">Remarks</div><div class="remarks">${escH(c.remarks).replace(/\n/g, '<br>')}</div>` : ''}
 
