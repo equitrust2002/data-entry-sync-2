@@ -378,6 +378,10 @@
                             <button onclick="exportLogsCSV()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5">
                                 <i class="fa-solid fa-file-csv text-emerald-400"></i> Export CSV
                             </button>
+                            <button onclick="document.getElementById('ledger-import-csv').click()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5">
+                                <i class="fa-solid fa-file-import text-amber-400"></i> Import CSV
+                            </button>
+                            <input type="file" id="ledger-import-csv" accept=".csv,text/csv" class="hidden" onchange="importLogsCSV(event)">
                             <button onclick="pullFromSheet(false)" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5">
                                 <i class="fa-solid fa-cloud-arrow-down"></i> Pull from Sheet
                             </button>
@@ -398,8 +402,8 @@
                                 <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entry Sheet</label><select id="ld-sheet" onchange="setSheetSelection(this.value)" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5 max-w-[200px]"></select></div>
                                 <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">From</label><input type="date" id="ld-from" onchange="renderLedgerTable()" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></div>
                                 <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">To</label><input type="date" id="ld-to" onchange="renderLedgerTable()" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></div>
-                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Asset Unit</label><select id="ld-unit" onchange="renderLedgerTable()" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></select></div>
-                                <button onclick="document.getElementById('ld-from').value='';document.getElementById('ld-to').value='';document.getElementById('ld-unit').value='__ALL__';setSheetSelection('__ALL__')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700">Reset</button>
+                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Asset Unit</label><div id="ld-unit" class="relative"></div></div>
+                                <button onclick="document.getElementById('ld-from').value='';document.getElementById('ld-to').value='';unitSel.ld=[];setSheetSelection('__ALL__')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700">Reset</button>
                                 <button onclick="openStatementFromLedger()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5"><i class="fa-solid fa-file-invoice"></i> Statement of Account</button>
                             </div>
                         </div>
@@ -460,8 +464,8 @@
                         </div>
 
                         <div>
-                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Target Asset Unit</label>
-                            <select id="stmt-unit" onchange="renderStatement()" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-lg px-2.5 py-2"></select>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Target Asset Unit <span class="normal-case text-slate-500 font-normal">(tick one or more)</span></label>
+                            <div id="stmt-unit" class="relative"></div>
                         </div>
 
                         <details class="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
@@ -1182,6 +1186,7 @@ function doGet(e) {
                     <button onclick="setPrintLayout('58mm')" id="btn-layout-58mm" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">58mm POS Thermal</button>
                 </div>
                 <div class="flex gap-2 flex-wrap">
+                    <button onclick="exportTicketCSV()" class="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition flex items-center gap-1.5"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
                     <button onclick="voidCurrentTicket()" id="ticket-void-btn" class="bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition flex items-center gap-1.5">
                         <i class="fa-solid fa-ban"></i> <span id="ticket-void-label">Void</span>
                     </button>
@@ -2478,8 +2483,8 @@ function doGet(e) {
         function getLedgerFiltered() {
             if (!stmtCfg) loadStmtCfg();
             const g = id => (document.getElementById(id) || {}).value || '';
-            const from = g('ld-from'), to = g('ld-to'), unit = g('ld-unit') || '__ALL__';
-            return logs.filter(l => { const d = getLogDate(l); return sheetMatch(l) && (!from || d >= from) && (!to || d <= to) && (unit === '__ALL__' || getLogUnit(l) === unit); });
+            const from = g('ld-from'), to = g('ld-to'), us = getSelUnits('ld');
+            return logs.filter(l => { const d = getLogDate(l); return sheetMatch(l) && (!from || d >= from) && (!to || d <= to) && (!us.length || us.includes(getLogUnit(l))); });
         }
 
         function renderLedgerDashboard(list) {
@@ -2500,20 +2505,19 @@ function doGet(e) {
         }
 
         function refreshLedgerUnitOptions() {
-            const sel = document.getElementById('ld-unit'); if (!sel) return;
-            const prev = sel.value || '__ALL__';
+            if (!document.getElementById('ld-unit')) return;
             const units = [...new Set(logs.filter(sheetMatch).map(getLogUnit))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-            sel.innerHTML = `<option value="__ALL__">All units</option>` + units.map(u => `<option value="${escH(u)}">${escH(u)}</option>`).join('');
-            sel.value = units.includes(prev) ? prev : '__ALL__';
+            unitSel.ld = unitSel.ld.filter(u => units.includes(u));
+            renderUnitMs('ld', units);
         }
 
         function openStatementFromLedger() {
             switchTab('statement');
-            const f = document.getElementById('ld-from').value, t = document.getElementById('ld-to').value, u = document.getElementById('ld-unit').value;
+            const f = document.getElementById('ld-from').value, t = document.getElementById('ld-to').value;
             if (f) document.getElementById('stmt-from').value = f;
             if (t) document.getElementById('stmt-to').value = t;
+            unitSel.stmt = unitSel.ld.slice();
             renderStatement();
-            if (u && u !== '__ALL__') { document.getElementById('stmt-unit').value = u; renderStatement(); }
         }
 
         function renderLedgerTable() {
@@ -2706,8 +2710,8 @@ function doGet(e) {
             try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
             loadStmtCfg();
             try { localStorage.setItem(STMT_KEY, JSON.stringify(stmtCfg)); } catch (e) {}
-            const u = document.getElementById('ld-unit'); if (u) u.value = '__ALL__';
-            if (stmtReady) { initStatementTab(); const su = document.getElementById('stmt-unit'); if (su) su.value = '__ALL__'; renderStatement(); }
+            unitSel.ld = []; unitSel.stmt = [];
+            if (stmtReady) { initStatementTab(); renderStatement(); }
             renderLedgerTable();
         }
         function allFormFields() { const m = new Map(); forms.forEach(f => (f.fields || []).forEach(fl => { if (!m.has(fl.label)) m.set(fl.label, fl); })); return [...m.values()]; }
@@ -2781,7 +2785,7 @@ function doGet(e) {
             stmtCfg.qtyField = gv('stmt-qty-field'); stmtCfg.rateField = gv('stmt-rate-field');
             stmtCfg.desc = [gv('stmt-desc1-field'), gv('stmt-desc2-field'), gv('stmt-desc3-field')];
             stmtCfg.sub = [gv('stmt-sub1-field'), gv('stmt-sub2-field')];
-            document.getElementById('stmt-unit').value = '__ALL__';
+            unitSel.stmt = [];
             saveStmtCfg(); renderStatement();
         }
 
@@ -2809,29 +2813,27 @@ function doGet(e) {
 
         function computeStatement() {
             const from = document.getElementById('stmt-from').value, to = document.getElementById('stmt-to').value;
-            const sel = document.getElementById('stmt-unit').value || '__ALL__';
+            const selList = getSelUnits('stmt');
             let voided = 0;
             const inRange = logs.filter(l => { const d = getLogDate(l); return sheetMatch(l) && (!from || d >= from) && (!to || d <= to); });
             const live = inRange.filter(l => { if (l.status === 'VOID') { voided++; return false; } return true; });
             const units = {};
             live.forEach(l => { const u = getLogUnit(l); (units[u] = units[u] || { unit: u, rows: [], amount: 0 }); units[u].rows.push(l); units[u].amount += getLogAmount(l); });
             const unitList = Object.values(units).sort((a, b) => a.unit.localeCompare(b.unit, undefined, { numeric: true }));
-            const chosen = sel === '__ALL__' ? unitList : unitList.filter(u => u.unit === sel);
+            const chosen = selList.length ? unitList.filter(u => selList.includes(u.unit)) : unitList;
             chosen.forEach(u => { u.rows.sort((a, b) => getLogDate(a).localeCompare(getLogDate(b)) || String(a.id).localeCompare(String(b.id))); u.target = stmtCfg.targets[u.unit]; u.hasTarget = u.target !== undefined && u.target !== '' && !isNaN(parseFloat(u.target)); u.diff = u.hasTarget ? u.amount - parseFloat(u.target) : null; });
             const tx = chosen.reduce((s, u) => s + u.rows.length, 0), amt = chosen.reduce((s, u) => s + u.amount, 0);
             const tgtUnits = chosen.filter(u => u.hasTarget);
             const tgt = tgtUnits.reduce((s, u) => s + parseFloat(u.target), 0);
             const diff = tgtUnits.length ? tgtUnits.reduce((s, u) => s + u.diff, 0) : null;
-            return { from, to, sel, unitList, chosen, tx, amt, tgt, diff, voided, hasTarget: tgtUnits.length > 0 };
+            return { from, to, sel: selList.length ? selList.join(', ') : '__ALL__', selList, unitList, chosen, tx, amt, tgt, diff, voided, hasTarget: tgtUnits.length > 0 };
         }
 
         function renderStatement() {
             if (!stmtCfg) return;
-            const selEl = document.getElementById('stmt-unit');
-            const prev = selEl.value || '__ALL__';
             const base = computeStatementUnitsOnly();
-            selEl.innerHTML = `<option value="__ALL__">All Asset Units</option>` + base.map(u => `<option value="${escH(u)}">${escH(stmtCfg.unitField)} ${escH(u)}</option>`).join('');
-            selEl.value = base.includes(prev) || prev === '__ALL__' ? prev : '__ALL__';
+            unitSel.stmt = unitSel.stmt.filter(u => base.includes(u));
+            renderUnitMs('stmt', base);
             const S = computeStatement(); stmtLastData = S;
 
             const amtL = stmtCfg.amountField || 'Amount', unitL = stmtCfg.unitField || 'Asset Unit';
@@ -2856,7 +2858,7 @@ function doGet(e) {
             document.getElementById('stmt-chart-days').innerHTML = dk.length ? dk.map(d => `<div class="flex flex-col items-center justify-end h-full min-w-[22px] flex-1" title="${fmtDate(d)}: ${fmtMoney(days[d])}"><div class="w-full bg-emerald-500/80 rounded-t" style="height:${Math.max(3, days[d] / dmax * 100)}%"></div><span class="text-[8px] text-slate-500 mt-1">${d.slice(8)}</span></div>`).join('') : '<p class="text-xs text-slate-500">No data.</p>';
 
             // Unit table (editable targets)
-            document.getElementById('stmt-unit-table').innerHTML = S.chosen.length ? S.chosen.map(u => `<tr class="hover:bg-slate-800/40"><td class="p-3 text-blue-300 font-bold cursor-pointer" onclick="document.getElementById('stmt-unit').value='${escH(u.unit).replace(/'/g, "\\'")}';renderStatement()">${escH(u.unit)}</td><td class="p-3 text-right">${u.rows.length}</td><td class="p-3 text-right text-emerald-300">${fmtMoney(u.amount)}</td><td class="p-3 text-right"><input type="number" step="0.01" value="${u.hasTarget ? u.target : ''}" placeholder="0.00" onchange="setUnitTarget('${escH(u.unit).replace(/'/g, "\\'")}', this.value)" class="w-32 bg-slate-950 border border-slate-700 text-white text-xs text-right rounded-lg px-2 py-1.5"></td><td class="p-3 text-right font-bold ${u.diff == null ? 'text-slate-500' : u.diff > 0 ? 'text-amber-400' : 'text-emerald-400'}">${u.diff == null ? '—' : fmtDiff(u.diff)}</td></tr>`).join('') : '<tr><td colspan="5" class="p-4 text-slate-500">No transactions in this coverage.</td></tr>';
+            document.getElementById('stmt-unit-table').innerHTML = S.chosen.length ? S.chosen.map(u => `<tr class="hover:bg-slate-800/40"><td class="p-3 text-blue-300 font-bold cursor-pointer" data-u="${escH(u.unit)}" onclick="unitSel.stmt=[this.dataset.u];renderStatement()">${escH(u.unit)}</td><td class="p-3 text-right">${u.rows.length}</td><td class="p-3 text-right text-emerald-300">${fmtMoney(u.amount)}</td><td class="p-3 text-right"><input type="number" step="0.01" value="${u.hasTarget ? u.target : ''}" placeholder="0.00" onchange="setUnitTarget('${escH(u.unit).replace(/'/g, "\\'")}', this.value)" class="w-32 bg-slate-950 border border-slate-700 text-white text-xs text-right rounded-lg px-2 py-1.5"></td><td class="p-3 text-right font-bold ${u.diff == null ? 'text-slate-500' : u.diff > 0 ? 'text-amber-400' : 'text-emerald-400'}">${u.diff == null ? '—' : fmtDiff(u.diff)}</td></tr>`).join('') : '<tr><td colspan="5" class="p-4 text-slate-500">No transactions in this coverage.</td></tr>';
 
             document.getElementById('stmt-preview').innerHTML = buildStatementDocHtml(S, false);
         }
@@ -2875,8 +2877,8 @@ function doGet(e) {
 
         function buildStatementDocHtml(S, forPrint) {
             const cur = (users.find(u => u.username === activeUser) || {}).fullname || activeUser;
-            const stmtNo = 'SOA-' + (S.to || isoDate(new Date())).replace(/-/g, '') + '-' + (S.sel === '__ALL__' ? 'ALL' : S.sel.replace(/[^A-Za-z0-9]/g, ''));
-            const unitLabel = S.sel === '__ALL__' ? 'All Asset Units' : `${stmtCfg.unitField} ${S.sel}`;
+            const stmtNo = 'SOA-' + (S.to || isoDate(new Date())).replace(/-/g, '') + '-' + (S.sel === '__ALL__' ? 'ALL' : S.selList.length === 1 ? S.sel.replace(/[^A-Za-z0-9]/g, '') : S.selList.length + 'UNITS');
+            const unitLabel = S.sel === '__ALL__' ? 'All Asset Units' : `${stmtCfg.unitField} ${S.sel}`;   // multiple units are comma-separated
             const c = stmtCfg;
             const sheetName = (forms.find(f => f.id === c.sheetId) || {}).name || 'All Sheets';
             const sig = (title, name, role) => `<div class="sig"><div class="sigline">${escH(name) || '&nbsp;'}</div><div class="signame">${escH(title)}</div><div class="sigrole">${escH(role) || '&nbsp;'}</div><div class="sigdate">Date: ____________</div></div>`;
@@ -3539,11 +3541,161 @@ function doGet(e) {
         }
         function clearSystemDatabase() { localStorage.clear(); location.reload(); }
 
+        // ===== Multi-select Target Asset Unit =====
+        const unitSel = { ld: [], stmt: [] };
+        const unitMsOpen = { ld: false, stmt: false };
+        function getSelUnits(kind) { return unitSel[kind] || []; }
+        function unitMsEl(kind) { return document.getElementById(kind === 'ld' ? 'ld-unit' : 'stmt-unit'); }
+        function refreshUnitConsumers(kind) { if (kind === 'ld') renderLedgerTable(); else renderStatement(); }
+        function renderUnitMs(kind, units) {
+            const el = unitMsEl(kind); if (!el) return;
+            const sel = unitSel[kind], compact = kind === 'ld';
+            const oldList = el.querySelector('.ms-list'), st = oldList ? oldList.scrollTop : 0;
+            const prefix = (kind === 'stmt' && stmtCfg && stmtCfg.unitField) ? stmtCfg.unitField + ' ' : '';
+            const allLbl = compact ? 'All units' : 'All Asset Units';
+            const label = (!sel.length || sel.length === units.length) ? allLbl : sel.length === 1 ? prefix + sel[0] : `${sel.length} units selected`;
+            const BT = 'bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-slate-700';
+            el.innerHTML = `<button type="button" onclick="toggleUnitMs('${kind}')" class="${compact ? 'text-xs px-2.5 py-1.5 min-w-[150px]' : 'text-sm px-2.5 py-2 w-full'} bg-slate-950 border border-slate-700 text-white rounded-lg flex items-center justify-between gap-2"><span class="truncate">${escH(label)}</span><i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i></button>
+                <div class="${unitMsOpen[kind] ? '' : 'hidden'} absolute z-30 mt-1 ${compact ? 'w-64' : 'w-full'} bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 space-y-1.5">
+                    <div class="flex gap-1.5"><button type="button" onclick="unitMsAll('${kind}')" class="${BT}">Select all</button><button type="button" onclick="unitMsClear('${kind}')" class="${BT}">Clear</button><span class="text-[10px] text-slate-500 ml-auto self-center">${sel.length} selected</span></div>
+                    <div class="ms-list max-h-56 overflow-y-auto space-y-0.5">${units.length ? units.map(u => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" data-u="${escH(u)}" ${sel.includes(u) ? 'checked' : ''} onchange="unitMsToggle('${kind}',this.dataset.u,this.checked)"><span class="truncate">${escH(prefix + u)}</span></label>`).join('') : '<p class="text-xs text-slate-500 px-1.5 py-1">No units found.</p>'}</div>
+                </div>`;
+            const nl = el.querySelector('.ms-list'); if (nl) nl.scrollTop = st;
+            el._units = units;
+        }
+        function toggleUnitMs(kind) {
+            unitMsOpen[kind] = !unitMsOpen[kind];
+            const el = unitMsEl(kind), p = el && el.children[1];
+            if (p) p.classList.toggle('hidden', !unitMsOpen[kind]);
+        }
+        function unitMsToggle(kind, u, on) {
+            const set = new Set(unitSel[kind]); on ? set.add(u) : set.delete(u);
+            unitSel[kind] = [...set]; refreshUnitConsumers(kind);
+        }
+        function unitMsAll(kind) { const el = unitMsEl(kind); unitSel[kind] = ((el && el._units) || []).slice(); refreshUnitConsumers(kind); }
+        function unitMsClear(kind) { unitSel[kind] = []; refreshUnitConsumers(kind); }
+        document.addEventListener('click', e => {
+            ['ld', 'stmt'].forEach(k => {
+                const el = unitMsEl(k);
+                if (unitMsOpen[k] && el && !el.contains(e.target)) { unitMsOpen[k] = false; if (el.children[1]) el.children[1].classList.add('hidden'); }
+            });
+        });
+
+        // ===== Ledger CSV export / import (one column per field, editable in Excel / Sheets) =====
+        const CSV_FIXED = ['Ticket ID', 'Timestamp', 'Operator', 'Form Name', 'Form ID', 'Status', 'Scanned Ticket'];
+        function csvCell(v) { v = v == null ? '' : String(v); return /[",\r\n]/.test(v) || /^\s|\s$/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+        function csvDataColumns(list) {
+            const cols = [], seen = new Set(CSV_FIXED);
+            const add = k => { if (!seen.has(k)) { seen.add(k); cols.push(k); } };
+            const formIds = [...new Set(list.map(l => l.formId))];
+            formIds.forEach(id => { const f = forms.find(x => x.id === id); if (f) f.fields.forEach(fl => { if (fl.type !== 'static') add(fl.label); }); });
+            list.forEach(l => Object.keys(l.data || {}).forEach(k => { if (k !== SCAN_REF_LABEL) add(k); }));
+            return cols;
+        }
+        function buildLogsCSV(list) {
+            const cols = csvDataColumns(list);
+            const head = CSV_FIXED.concat(cols);
+            const rows = list.map(l => {
+                const d = l.data || {};
+                const fixed = [l.id, l.timestamp, l.user, l.formName, l.formId || '', l.status || 'VALID', l.sourceTicket || d[SCAN_REF_LABEL] || ''];
+                return fixed.concat(cols.map(c => { const v = d[c]; return String(v == null ? '' : v).startsWith('data:image') ? '[Image]' : v; }));
+            });
+            return '\ufeff' + [head].concat(rows).map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+        }
+        function downloadCSV(text, name) {
+            const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+        }
         function exportLogsCSV() {
-            let csv = 'Ticket ID,Timestamp,Operator,Form Name,Status,Scanned Ticket,Data\n';
-            logs.forEach(l => csv += `"${l.id}","${l.timestamp}","${l.user}","${l.formName}","${l.status}","${l.sourceTicket || (l.data && l.data[SCAN_REF_LABEL]) || ''}","${JSON.stringify(l.data || {}).replace(/"/g, '""')}"\n`);
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob); a.download = 'Ullswater_Ledger.csv'; a.click();
+            if (!stmtCfg) loadStmtCfg();
+            const list = getLedgerFiltered();
+            if (!list.length) { showToast('No ledger rows to export', 'error'); return; }
+            downloadCSV(buildLogsCSV(list), 'Ullswater_Ledger_' + isoDate(new Date()) + '.csv');
+            showToast(`Exported ${list.length} row(s) - edit in Excel, then use Import CSV`, 'success');
+        }
+        function exportTicketCSV() {
+            const log = logs.find(l => l.id === currentTicketModalId); if (!log) return;
+            downloadCSV(buildLogsCSV([log]), log.id + '.csv');
+        }
+        function parseCSVText(text) {
+            text = text.replace(/^\ufeff/, '');
+            const rows = []; let row = [], cur = '', q = false;
+            for (let i = 0; i < text.length; i++) {
+                const c = text[i];
+                if (q) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+                else if (c === '"') q = true;
+                else if (c === ',') { row.push(cur); cur = ''; }
+                else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
+                else cur += c;
+            }
+            if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+            return rows.filter(r => r.some(x => String(x).trim() !== ''));
+        }
+        function csvNormDate(v, withTime) {   // Excel often rewrites 2026-11-12 as 11/12/2026
+            const m = String(v).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+            if (!m) return v;
+            let [, a, b, y, hh, mm, ss] = m; a = +a; b = +b;
+            const mo = a > 12 ? b : a, da = a > 12 ? a : b, p = n => String(n).padStart(2, '0');
+            const d = `${y}-${p(mo)}-${p(da)}`;
+            return withTime ? `${d} ${p(hh || 0)}:${p(mm || 0)}:${p(ss || 0)}` : d;
+        }
+        function importLogsCSV(e) {
+            const file = e.target.files[0]; e.target.value = '';
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = evt => {
+                try {
+                    const rows = parseCSVText(String(evt.target.result));
+                    if (rows.length < 2) { showToast('CSV has no data rows', 'error'); return; }
+                    const head = rows[0].map(h => h.trim());
+                    const idx = {}; head.forEach((h, i) => { idx[h] = i; });
+                    if (idx['Ticket ID'] === undefined) { showToast('Not a ledger CSV: "Ticket ID" column missing (use Export CSV first)', 'error'); return; }
+                    const dataCols = head.filter(h => h && !CSV_FIXED.includes(h));
+                    const plan = [];
+                    rows.slice(1).forEach(r => {
+                        const get = k => idx[k] === undefined ? undefined : (r[idx[k]] == null ? '' : r[idx[k]]);
+                        const id = String(get('Ticket ID') || '').trim();
+                        const existing = id ? logs.find(l => l.id === id) : null;
+                        plan.push({ r, get, id, existing });
+                    });
+                    const nUpd = plan.filter(p => p.existing).length, nNew = plan.length - nUpd;
+                    if (!confirm(`Import ${plan.length} row(s) from "${file.name}"?\n\n• ${nUpd} existing ticket(s) will be UPDATED\n• ${nNew} new ticket(s) will be ADDED\n\nRows missing from the CSV are NOT deleted.`)) return;
+                    let upd = 0, add = 0; const touched = [];
+                    plan.forEach(p => {
+                        const g = p.get;
+                        const formName = String(g('Form Name') || '').trim();
+                        const formId = String(g('Form ID') || '').trim();
+                        const form = forms.find(f => f.id === formId) || forms.find(f => f.name.toLowerCase() === formName.toLowerCase());
+                        const log = p.existing || { id: p.id || ('TKT-2026-' + String(Math.floor(1000 + Math.random() * 9000))), user: activeUser || 'admin', status: 'VALID', data: {}, sourceTicket: '' };
+                        if (!p.existing) { while (logs.some(l => l.id === log.id)) log.id += 'x'; log.timestamp = getLocalTimestamp(); }
+                        const ts = g('Timestamp'); if (ts) log.timestamp = csvNormDate(ts, true);
+                        const op = g('Operator'); if (op) log.user = op.replace(/^@/, '');
+                        if (form) { log.formName = form.name; log.formId = form.id; } else if (formName) { log.formName = formName; log.formId = log.formId || ''; }
+                        else if (!p.existing) { showToast(`Skipped a new row: no Form Name`, 'error'); return; }
+                        const st = String(g('Status') || '').trim().toUpperCase(); if (st === 'VOID' || st === 'VALID') log.status = st;
+                        const sc = g('Scanned Ticket'); if (sc !== undefined) { log.sourceTicket = sc; if (sc) log.data[SCAN_REF_LABEL] = sc; else delete log.data[SCAN_REF_LABEL]; }
+                        const fieldDef = label => form ? form.fields.find(f => f.label === label) : null;
+                        dataCols.forEach(c => {
+                            let v = p.r[idx[c]]; v = v == null ? '' : v;
+                            const had = Object.prototype.hasOwnProperty.call(log.data, c);
+                            if (v === '[Image]') return;                         // keep the stored picture / signature
+                            if (v === '' && !had) return;                        // column belongs to another form
+                            const def = fieldDef(c);
+                            if (def && def.type === 'date') v = csvNormDate(v, false);
+                            log.data[c] = v;
+                        });
+                        log._dirtyAt = Date.now();
+                        if (p.existing) upd++; else { log.sheetSynced = false; logs.unshift(log); add++; }
+                        touched.push(log);
+                    });
+                    logs.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+                    localStorage.setItem('ullswater_logs', JSON.stringify(logs));
+                    renderLedgerTable(); if (stmtReady) renderStatement(); renderTransmissionsOverview();
+                    touched.forEach(l => postLogToGoogleSheet(l, l.formName));
+                    showToast(`CSV imported: ${upd} updated, ${add} added`, 'success');
+                } catch (err) { showToast('CSV import failed: ' + (err && err.message ? err.message : err), 'error'); }
+            };
+            reader.readAsText(file, 'utf-8');
         }
         function wipeAllData() { logs = []; localStorage.removeItem('ullswater_logs'); renderLedgerTable(); }
         function updateSidebarStats() { document.getElementById('sidebar-queue').innerText = logs.length + ' Tickets'; }
