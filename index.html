@@ -554,7 +554,7 @@
                         </div>
 
                         <div>
-                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entry Sheet</label>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Data Entry Sheet <span id="stmt-access-note" class="normal-case text-slate-500 font-normal">(tick one or more)</span></label>
                             <div id="stmt-sheet" class="relative"></div>
                         </div>
 
@@ -611,6 +611,9 @@
                         <button onclick="printStatement()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition flex items-center justify-center gap-2 shadow-md">
                             <i class="fa-solid fa-print"></i> Print Statement of Account
                         </button>
+                        <button onclick="document.getElementById('stmt-email-panel').scrollIntoView({behavior:'smooth',block:'start'})" class="w-full bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition flex items-center justify-center gap-2 shadow-md">
+                            <i class="fa-solid fa-envelope"></i> Email Statement / Auto-Send
+                        </button>
                     </aside>
 
                     <!-- MAIN: dashboard + statement preview -->
@@ -644,6 +647,71 @@
                         <div>
                             <div class="flex items-center justify-between mb-2"><h4 class="text-xs font-bold text-white uppercase tracking-wider">Statement Preview</h4><span class="text-[10px] text-slate-400">What you see here is what prints (A4)</span></div>
                             <div class="overflow-x-auto"><div id="stmt-preview" class="bg-white text-slate-900 rounded-xl shadow-xl mx-auto" style="max-width:820px;"></div></div>
+                        </div>
+
+                        <!-- EMAIL STATEMENT + DAILY AUTO-SEND -->
+                        <div id="stmt-email-panel" class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                            <div class="p-4 border-b border-slate-800">
+                                <h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2"><i class="fa-solid fa-envelope text-blue-400"></i> Email Statement &amp; Daily Auto-Send <span id="em-badge" class="ml-2 normal-case text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">Not checked yet</span></h4>
+                                <p class="text-[11px] text-slate-400 mt-1">Sends the dashboard summary + statement (and a PDF copy) for the sheets ticked above, limited to your access. Sent through your Google Apps Script (Connection tab).</p>
+                            </div>
+                            <details id="em-guide" class="border-b border-slate-800" open>
+<summary class="px-4 py-3 text-xs font-bold text-amber-300 cursor-pointer select-none"><i class="fa-solid fa-list-check mr-1"></i> Easy setup – 7 short steps (about 5 minutes, one time only)</summary>
+<div class="px-4 pb-4 space-y-2.5">
+<div class="text-[11px] text-slate-400">Emails are sent by <b>your own Google account</b> through a small script in your Google Sheet. Google asks you <b>once</b> to allow it – that is the “email permission”. Follow the steps in order; press <b>Check Setup</b> at the end and it will tell you exactly which step to fix.</div>
+<div id="em-step-1" class="em-step flex gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="shrink-0 w-7 h-7 rounded-full bg-amber-600 text-white text-xs font-bold flex items-center justify-center">1</div><div class="min-w-0 flex-1"><div class="text-xs font-bold text-white mb-1">Copy the script</div><div class="text-[12px] text-slate-300 leading-relaxed space-y-1.5"><p>Press the amber button. It must say “Script copied”. If your browser blocks copying, press <b>Download Code.gs</b>, open the file in Notepad, <b>Ctrl+A</b>, <b>Ctrl+C</b>.</p><div class="flex gap-2 flex-wrap pt-1"><button onclick="emCopyScript()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition inline-flex items-center gap-2"><i class="fa-solid fa-copy"></i> Copy Script</button><button onclick="emDownloadScript()" class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition inline-flex items-center gap-2"><i class="fa-solid fa-download"></i> Download Code.gs</button></div></div></div></div>
+<div id="em-step-2" class="em-step flex gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="shrink-0 w-7 h-7 rounded-full bg-amber-600 text-white text-xs font-bold flex items-center justify-center">2</div><div class="min-w-0 flex-1"><div class="text-xs font-bold text-white mb-1">Open Apps Script from your Google Sheet</div><div class="text-[12px] text-slate-300 leading-relaxed space-y-1.5"><p>Open your Google Sheet (button below) → top menu <b>Extensions → Apps Script</b>. A new tab opens with a code editor.</p><div class="pt-1"><button onclick="emOpenSheet()" class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition inline-flex items-center gap-2"><i class="fa-solid fa-table"></i> Open my Google Sheet</button></div><p class="text-[11px] text-slate-400">Use the same Google account that owns the sheet. If you are signed into several accounts, use a private/incognito window to avoid mix-ups.</p></div></div></div>
+<div id="em-step-3" class="em-step flex gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="shrink-0 w-7 h-7 rounded-full bg-amber-600 text-white text-xs font-bold flex items-center justify-center">3</div><div class="min-w-0 flex-1"><div class="text-xs font-bold text-white mb-1">Paste and Save</div><div class="text-[12px] text-slate-300 leading-relaxed space-y-1.5"><p>Click inside the code editor → <b>Ctrl+A</b> (select all) → <b>Delete</b> → <b>Ctrl+V</b> (paste) → press the <b>💾 Save</b> icon (or <b>Ctrl+S</b>).</p></div></div></div>
+<div id="em-step-4" class="em-step flex gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="shrink-0 w-7 h-7 rounded-full bg-amber-600 text-white text-xs font-bold flex items-center justify-center">4</div><div class="min-w-0 flex-1"><div class="text-xs font-bold text-white mb-1">Give the email permission (one time) <span class="text-amber-300">← the “no email permission” fix</span></div><div class="text-[12px] text-slate-300 leading-relaxed space-y-1.5"><ol class="list-[lower-alpha] ml-5 space-y-1"><li>In the top bar, click the function drop-down (it may say <i>doGet</i>) and choose <b>authorizeEmail</b>.</li><li>Press <b>▶ Run</b>.</li><li>A box “Authorization required” appears → <b>Review permissions</b>.</li><li>Pick your Google account.</li><li>If you see “Google hasn’t verified this app”: click <b>Advanced</b> (small text, bottom-left) → <b>Go to … (unsafe)</b>. This is your own script, it is safe.</li><li>Click <b>Allow</b>.</li><li>At the bottom the log should say <b>Execution completed</b> and a mail “Ullswater Fleet Hub – email permission OK” arrives in your own inbox. <b>That proves the permission works.</b></li></ol></div></div></div>
+<div id="em-step-5" class="em-step flex gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="shrink-0 w-7 h-7 rounded-full bg-amber-600 text-white text-xs font-bold flex items-center justify-center">5</div><div class="min-w-0 flex-1"><div class="text-xs font-bold text-white mb-1">Deploy it as a Web app</div><div class="text-[12px] text-slate-300 leading-relaxed space-y-1.5"><p><b>First time:</b> <b>Deploy → New deployment</b> → click the ⚙ gear → <b>Web app</b> → <i>Execute as:</i> <b>Me</b> → <i>Who has access:</i> <b>Anyone</b> → <b>Deploy</b> → copy the <b>Web app URL</b> (ends with <span class="font-mono">/exec</span>).</p><p><b>Already deployed before?</b> <b>Deploy → Manage deployments</b> → ✏ pencil → <i>Version:</i> <b>New version</b> → <b>Deploy</b>. (Skipping “New version” is the #1 reason emails keep failing – the old version has no permission.)</p></div></div></div>
+<div id="em-step-6" class="em-step flex gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="shrink-0 w-7 h-7 rounded-full bg-amber-600 text-white text-xs font-bold flex items-center justify-center">6</div><div class="min-w-0 flex-1"><div class="text-xs font-bold text-white mb-1">Paste the URL and token here</div><div class="text-[12px] text-slate-300 leading-relaxed space-y-1.5"><div class="grid grid-cols-1 md:grid-cols-2 gap-2"><div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Web app URL (…/exec)</label><input type="text" id="em-url" onchange="emSyncConn()" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2 font-mono"></div><div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Security token (leave as is)</label><input type="text" id="em-token" onchange="emSyncConn()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2 font-mono"></div></div><p class="text-[11px] text-slate-400">Saved automatically. The token must equal <span class="font-mono">EMAIL_TOKEN</span> at the top of the script (already the same by default).</p></div></div></div>
+<div id="em-step-7" class="em-step flex gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="shrink-0 w-7 h-7 rounded-full bg-amber-600 text-white text-xs font-bold flex items-center justify-center">7</div><div class="min-w-0 flex-1"><div class="text-xs font-bold text-white mb-1">Check and test</div><div class="text-[12px] text-slate-300 leading-relaxed space-y-1.5"><p>Type your email in “Send to” below, then press <b>Test Email Setup</b>. All 5 lines must show ✓ and a test email arrives within a minute.</p><div class="flex gap-2 flex-wrap pt-1"><button onclick="emSyncConn();checkEmailSetup()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition inline-flex items-center gap-2"><i class="fa-solid fa-circle-check"></i> Check Setup</button><button onclick="testEmailSetup()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition inline-flex items-center gap-2"><i class="fa-solid fa-stethoscope"></i> Test Email Setup</button></div></div></div></div>
+<details class="rounded-xl border border-rose-900/60 bg-rose-950/20"><summary class="px-3 py-2.5 text-xs font-bold text-rose-300 cursor-pointer select-none"><i class="fa-solid fa-screwdriver-wrench mr-1"></i> Still says “no email permission”? Try these in order</summary>
+<ol class="list-decimal ml-8 mr-3 pb-3 text-[12px] text-slate-300 space-y-1.5 leading-relaxed">
+<li>Run <b>authorizeEmail</b> again (step 4). If a popup never appeared, allow popups for <span class="font-mono">script.google.com</span>. You must receive the test email in your inbox.</li>
+<li>After allowing, you <b>must</b> do <b>Deploy → Manage deployments → ✏ → New version → Deploy</b> (step 5). The old version keeps the old (missing) permission.</li>
+<li>Make sure the account you allowed is the one that <b>owns</b> the Sheet and that <i>Execute as</i> is <b>Me</b>.</li>
+<li>In Apps Script click ⚙ <b>Project Settings</b>. If “Show appsscript.json manifest file” is ticked, open <span class="font-mono">appsscript.json</span> and delete any <span class="font-mono">oauthScopes</span> line, then Save and redeploy a New version.</li>
+<li>Reset: open <span class="font-mono">myaccount.google.com/permissions</span>, remove your Apps Script project, then repeat steps 4 and 5.</li>
+<li>No “Advanced” link at all? Your company Google Workspace blocks it – ask your admin, or copy the sheet into a free personal Gmail account and use that.</li>
+<li>Need to send right now? Use the <b>Send with my mail app</b> button that appears after a failed send – it needs no permission.</li>
+</ol></details>
+</div></details>
+                            <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div class="md:col-span-2"><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Send to (separate several with commas)</label><input type="text" id="em-to" oninput="saveEmailForm()" placeholder="name@company.com, manager@company.com" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div>
+                                <div class="md:col-span-2"><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Subject <span class="normal-case text-slate-500 font-normal">(optional · {sheets} {from} {to} {date} are filled in)</span></label><input type="text" id="em-subject" oninput="saveEmailForm()" placeholder="Statement of Account – {sheets} – {from} to {to}" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div>
+                                <div class="md:col-span-2"><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Message (optional)</label><textarea id="em-msg" oninput="saveEmailForm()" rows="2" placeholder="Short note shown above the statement" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></textarea></div>
+                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Auto-send time of day</label><input type="time" id="em-time" value="08:00" onchange="saveEmailForm()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></div>
+                                <div><label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Period covered by the auto-sent report</label><select id="em-period" onchange="saveEmailForm()" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"><option value="today">Today</option><option value="yesterday" selected>Yesterday</option><option value="last7">Last 7 days</option><option value="month">This month (to date)</option><option value="lastmonth">Last month</option><option value="all">All dates</option></select></div>
+                                <label class="md:col-span-2 flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" id="em-late" checked onchange="saveEmailForm()" class="accent-blue-600"> If the app was closed at that time, send it as soon as the app is opened that day</label>
+                                <div class="md:col-span-2 flex gap-2 flex-wrap">
+                                    <button id="em-send-btn" onclick="emailStatementNow()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition flex items-center gap-2"><i class="fa-solid fa-paper-plane"></i> Email Statement Now (as shown above)</button>
+                                    <button onclick="saveEmailSchedule()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition flex items-center gap-2"><i class="fa-solid fa-clock"></i> Save Daily Auto-Send</button>
+                                    <button onclick="testEmailSetup()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-xl transition flex items-center gap-2 border border-slate-700"><i class="fa-solid fa-stethoscope"></i> Test Email Setup</button>
+                                </div>
+                                <div id="em-status" class="md:col-span-2 hidden text-[11px] leading-relaxed rounded-lg border border-slate-700 bg-slate-950 p-3"></div>
+                                <p class="md:col-span-2 text-[10px] text-slate-500 leading-relaxed">A daily auto-send saves the current Statement Setup (ticked sheets, field mapping, targets, signatories) and sends at the chosen time every day. <b>The page must be open in a browser at that time</b> (keep it open on an office PC/tablet); the report is built from the data on that device. One-time setup: follow the 7 steps in the guide above (the key one is step 4 – run <b>authorizeEmail</b> and press Allow). Press <b>Test Email Setup</b> to verify.</p>
+                            </div>
+                            <div class="border-t border-slate-800 overflow-x-auto"><table class="w-full text-left text-xs text-slate-300">
+                                <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr><th class="p-3">Owner</th><th class="p-3">Daily at</th><th class="p-3">Period</th><th class="p-3">Recipients</th><th class="p-3">Sheets</th><th class="p-3">Last result</th><th class="p-3 text-right">Actions</th></tr></thead>
+                                <tbody id="em-sched-body" class="divide-y divide-slate-800/60"></tbody>
+                            </table></div>
+                        </div>
+
+                        <!-- USER ACCESS LOG (based on each user's access permission) -->
+                        <div id="stmt-access-panel" class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                            <div class="p-4 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+                                <h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2"><i class="fa-solid fa-user-lock text-blue-400"></i> User Access Log</h4>
+                                <div class="flex items-center gap-2">
+                                    <select id="acl-user" onchange="renderAccessLog()" class="hidden bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-1.5"></select>
+                                    <button id="acl-clear" onclick="clearAccessLog()" class="hidden bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-slate-700">Clear Log</button>
+                                </div>
+                            </div>
+                            <div id="acl-summary" class="px-4 pt-3 text-[11px] text-slate-400 leading-relaxed"></div>
+                            <div class="overflow-x-auto max-h-72 overflow-y-auto"><table class="w-full text-left text-xs text-slate-300">
+                                <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold sticky top-0"><tr><th class="p-3">Time</th><th class="p-3">User</th><th class="p-3">Action</th><th class="p-3">Data Entry Sheets</th></tr></thead>
+                                <tbody id="acl-body" class="divide-y divide-slate-800/60"></tbody>
+                            </table></div>
                         </div>
                     </div>
                 </div>
@@ -1070,16 +1138,35 @@
                                     <div class="text-xs font-bold text-amber-300"><i class="fa-solid fa-code mr-1"></i> Google Apps Script (two-way: pushes entries to the sheet AND lets the app pull sheet edits back)</div>
                                     <button type="button" onclick="copyAppsScript()" class="bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">Copy Script</button>
                                 </div>
-                                <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this, replace everything → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the /exec URL above. <b>Re-deploy as a NEW VERSION after pasting this update</b> (Deploy → Manage deployments → Edit → New version) so the pull feature goes live.</p>
+                                <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this, replace everything → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the /exec URL above. <b>Re-deploy as a NEW VERSION after pasting this update</b> (Deploy → Manage deployments → Edit → New version). For email, also run <b>authorizeEmail</b> once and press Allow – full steps are in Statement → Email panel.</p>
                                 <textarea id="apps-script-code" readonly rows="12" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet receiver
 // Creates the tab + columns automatically, incl. "Scanned Ticket".
 // Re-sending the same Ticket ID updates its row (no duplicates).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
+// Must equal the Security Token in the app's Connection tab (protects the email action).
+const EMAIL_TOKEN = 'ULLSWATER-CORP-SECURE-9021';
+const SCRIPT_VERSION = 3;   // the app checks this number to know your script is up to date
 
 function doPost(e) {
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     const d = JSON.parse(e.postData.contents);
+    // ===== EMAIL: sends the Dashboard &amp; Statement (HTML body + PDF attachment) =====
+    // The app waits for the result via doGet?action=emailresult, so it only says "sent" when Google really sent it.
+    if (d.action === 'email') {
+      const cache = CacheService.getScriptCache(), key = 'email_' + String(d.id || '');
+      const J = function (o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); };
+      const done = function (o) { try { cache.put(key, JSON.stringify(o), 21600); } catch (ce) {} return J(o); };
+      if (String(d.token || '') !== EMAIL_TOKEN) return done({ status: 'failed', error: 'Invalid token (Connection tab token does not match EMAIL_TOKEN in the script)' });
+      const prev = cache.get(key);
+      if (prev &amp;&amp; JSON.parse(prev).status === 'sent') return J(JSON.parse(prev));   // same request already sent: never duplicate
+      try {
+        const opts = { to: String(d.to || ''), subject: String(d.subject || 'Statement of Account'), htmlBody: String(d.html || ''), name: 'Ullswater Fleet Hub' };
+        try { opts.attachments = [Utilities.newBlob(String(d.pdfHtml || d.html), 'text/html', 'Statement.html').getAs('application/pdf').setName(String(d.fileName || 'Statement.pdf'))]; } catch (pe) {}
+        MailApp.sendEmail(opts);
+        return done({ status: 'sent', emailed: opts.to, remaining: MailApp.getRemainingDailyQuota() });
+      } catch (me) { return done({ status: 'failed', error: String(me) }); }
+    }
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const tab = d.targetTab || d.formName || 'Ledger';
     if (d.action === 'delete') {
@@ -1124,6 +1211,14 @@ function doPost(e) {
   } finally { lock.releaseLock(); }
 }
 
+// STEP 4 - Run this ONCE: pick authorizeEmail in the function list, press Run, then press Review permissions and Allow.
+// It sends a short test email to YOURSELF - that is what makes Google ask for the email permission.
+function authorizeEmail() {
+  const me = Session.getEffectiveUser().getEmail();
+  MailApp.sendEmail(me, 'Ullswater Fleet Hub - email permission OK', 'Permission granted. Emails left today: ' + MailApp.getRemainingDailyQuota());
+  Logger.log('Done. A test email was sent to ' + me + '. Now do step 5 (Deploy).');
+}
+
 // ===== PULL: lets the app mirror everything in the sheet (manual edits, new rows, corrections, deletions) =====
 // Each tab that has a "Ticket ID" column is treated as a ledger tab. A manually typed row with no Ticket ID
 // gets one assigned automatically (and written back to the sheet) so the app can track it.
@@ -1137,6 +1232,19 @@ function fmt_(v, h) {
 }
 
 function doGet(e) {
+  const p = (e &amp;&amp; e.parameter) || {};
+  const J = function (o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); };
+  if (p.action === 'emailresult') {          // result of an email request sent by the app
+    const raw = CacheService.getScriptCache().get('email_' + String(p.id || ''));
+    const r = raw ? JSON.parse(raw) : { status: 'pending' };
+    return J({ ok: true, emailStatus: r.status, error: r.error || '' });
+  }
+  if (p.action === 'emailcheck') {           // setup test used by the app
+    const tokenOk = String(p.token || '') === EMAIL_TOKEN, out = { ok: true, emailSupport: true, version: SCRIPT_VERSION, tokenOk: tokenOk };
+    try { out.quota = MailApp.getRemainingDailyQuota(); out.authorized = true; if (tokenOk) out.sender = Session.getEffectiveUser().getEmail(); }
+    catch (ae) { out.authorized = false; out.error = String(ae); }
+    return J(out);
+  }
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     const out = { ok: true, tabs: {}, rows: [], fetchedAt: new Date().toISOString() };
@@ -2968,8 +3076,9 @@ function doGet(e) {
         const fmtNet = n => (n < 0 ? '−' : '') + fmtMoney(Math.abs(n));
         const fmtDate = s => { if (!s) return ''; const d = new Date(s + 'T00:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); };
 
-        const getSheetIds = () => { const c = stmtCfg || {}; if (Array.isArray(c.sheetIds)) return c.sheetIds; return (c.sheetId && c.sheetId !== '__ALL__') ? [c.sheetId] : []; };
-        const sheetMatch = l => { const ids = getSheetIds(); if (!ids.length) return true; return ids.some(sid => l.formId === sid || (!forms.find(f => f.id === l.formId) && (forms.find(f => f.id === sid) || {}).name === l.formName)); };
+        const getSheetIds = () => _rawSheetIds().filter(isFormPermitted);
+        const _rawSheetIds = () => { const c = stmtCfg || {}; if (Array.isArray(c.sheetIds)) return c.sheetIds; return (c.sheetId && c.sheetId !== '__ALL__') ? [c.sheetId] : []; };
+        const sheetMatch = l => { if (!logAllowed(l)) return false; const ids = getSheetIds(); if (!ids.length) return true; return ids.some(sid => l.formId === sid || (!forms.find(f => f.id === l.formId) && (forms.find(f => f.id === sid) || {}).name === l.formName)); };
         function scopeFields() {
             const ids = getSheetIds().filter(i => forms.some(f => f.id === i));
             if (!ids.length) return allFormFields();
@@ -2984,12 +3093,12 @@ function doGet(e) {
                 const el = document.getElementById(id); if (!el) return;
                 const sel = getSheetIds().filter(i => forms.some(f => f.id === i)), compact = kind === 'ld';
                 const oldList = el.querySelector('.ms-list'), st = oldList ? oldList.scrollTop : 0;
-                const label = !sel.length ? `All Sheets (${logs.length})` : sel.length === 1 ? (forms.find(f => f.id === sel[0]) || {}).name : `${sel.length} sheets selected`;
+                const label = !sel.length ? `All Sheets (${logs.filter(logAllowed).length})` : sel.length === 1 ? (forms.find(f => f.id === sel[0]) || {}).name : `${sel.length} sheets selected`;
                 const BT = 'bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-slate-700';
                 el.innerHTML = `<button type="button" onclick="toggleSheetMs('${kind}')" class="${compact ? 'text-xs px-2.5 py-1.5 min-w-[150px] max-w-[220px]' : 'text-sm px-2.5 py-2 w-full'} bg-slate-950 border border-slate-700 text-white rounded-lg flex items-center justify-between gap-2"><span class="truncate">${escH(label)}</span><i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i></button>
                     <div class="${sheetMsOpen[kind] ? '' : 'hidden'} absolute z-30 mt-1 ${compact ? 'w-64' : 'w-full'} bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 space-y-1.5">
                         <div class="flex gap-1.5 items-center"><button type="button" onclick="sheetMsClear()" class="${BT}">All sheets</button><span class="text-[10px] text-slate-500 ml-auto">${sel.length} selected</span></div>
-                        <div class="ms-list max-h-56 overflow-y-auto space-y-0.5">${forms.map(f => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" ${sel.includes(f.id) ? 'checked' : ''} onchange="sheetMsToggle('${escH(f.id)}', this.checked)"><span class="truncate">${escH(f.name)}</span><span class="ml-auto text-slate-500 font-mono">${logs.filter(l => l.formId === f.id).length}</span></label>`).join('')}</div>
+                        <div class="ms-list max-h-56 overflow-y-auto space-y-0.5">${getUserPermittedForms().map(f => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" ${sel.includes(f.id) ? 'checked' : ''} onchange="sheetMsToggle('${escH(f.id)}', this.checked)"><span class="truncate">${escH(f.name)}</span><span class="ml-auto text-slate-500 font-mono">${logs.filter(l => l.formId === f.id).length}</span></label>`).join('')}</div>
                     </div>`;
                 const nl = el.querySelector('.ms-list'); if (nl) nl.scrollTop = st;
             });
@@ -3021,7 +3130,7 @@ function doGet(e) {
             renderLedgerTable();
             renderSheetMs();
         }
-        function allFormFields() { const m = new Map(); forms.forEach(f => (f.fields || []).forEach(fl => { if (!m.has(fl.label)) m.set(fl.label, fl); })); return [...m.values()]; }
+        function allFormFields() { const m = new Map(); getUserPermittedForms().forEach(f => (f.fields || []).forEach(fl => { if (!m.has(fl.label)) m.set(fl.label, fl); })); return [...m.values()]; }
 
         function loadStmtCfg() {
             let c = {};
@@ -3239,7 +3348,7 @@ function doGet(e) {
             const stmtNo = 'SOA-' + (S.to || isoDate(new Date())).replace(/-/g, '') + '-' + (S.sel === '__ALL__' ? 'ALL' : S.selList.length === 1 ? S.sel.replace(/[^A-Za-z0-9]/g, '') : S.selList.length + 'UNITS');
             const unitLabel = S.sel === '__ALL__' ? 'All Asset Units' : `${stmtCfg.unitField} ${S.sel}`;   // multiple units are comma-separated
             const c = stmtCfg;
-            const sheetName = (() => { const n = getSheetIds().map(i => (forms.find(f => f.id === i) || {}).name).filter(Boolean); return n.length ? n.join(', ') : 'All Sheets'; })();
+            const sheetName = (() => { const n = getSheetIds().map(i => (forms.find(f => f.id === i) || {}).name).filter(Boolean); return n.length ? n.join(', ') : (activeUserRole === 'Administrator' || getUserPermittedForms().length === forms.length ? 'All Sheets' : (getUserPermittedForms().map(f => f.name).join(', ') || 'No sheets assigned')); })();
             const sig = (title, name, role) => `<div class="sig"><div class="sigline">${escH(name) || '&nbsp;'}</div><div class="signame">${escH(title)}</div><div class="sigrole">${escH(role) || '&nbsp;'}</div><div class="sigdate">Date: ____________</div></div>`;
             const col = n => `<td class="num">${n}</td>`;
             const unitL = c.unitField || 'Asset Unit', amtL = c.amountField || 'Amount';
@@ -3869,7 +3978,7 @@ function doGet(e) {
 
         function renderUsersTable() {
             document.getElementById('users-table-body').innerHTML = users.map(u => `
-                <tr class="border-b border-slate-800"><td class="p-3.5 font-bold text-white">@${u.username}</td><td class="p-3.5 text-slate-300">${u.fullname} <br><span class="text-[10px] text-blue-400 font-mono">${u.role}</span></td><td class="p-3.5 text-slate-300">All Forms</td><td class="p-3.5 text-right"><button onclick="deleteUser('${u.username}')" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button></td></tr>
+                <tr class="border-b border-slate-800"><td class="p-3.5 font-bold text-white">@${u.username}</td><td class="p-3.5 text-slate-300">${u.fullname} <br><span class="text-[10px] text-blue-400 font-mono">${u.role}</span></td><td class="p-3.5 text-slate-300">${userFormsCell(u)}</td><td class="p-3.5 text-right"><button onclick="deleteUser('${u.username}')" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button></td></tr>
             `).join('');
         }
         function openAddUserModal() { document.getElementById('user-modal').classList.remove('hidden'); }
@@ -4301,6 +4410,406 @@ function doGet(e) {
             const blob = new Blob(['<!DOCTYPE html>\n' + document.documentElement.outerHTML], { type: 'text/html;charset=utf-8' });
             const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'ullswater-fleet-hub-standalone.html'; a.click();
         }
+
+
+        // ===== User access permissions + User Access Log (Dashboard & Statement) =====
+        const ACCESS_LOG_KEY = 'ullswater_access_log';
+        let accessLog = (() => { try { return JSON.parse(localStorage.getItem(ACCESS_LOG_KEY)) || []; } catch (e) { return []; } })();
+
+        // Sheets a user may see: Administrator = all; otherwise the sheets ticked for that user (Users tab),
+        // falling back to the form's role access list when nothing has been ticked for the user yet.
+        function getUserPermittedForms(uname, role) {
+            uname = uname === undefined ? activeUser : uname; role = role === undefined ? activeUserRole : role;
+            if (!uname) return [];
+            if (role === 'Administrator') return forms;
+            const u = users.find(x => x.username === uname);
+            if (u && Array.isArray(u.allowedForms)) return forms.filter(f => u.allowedForms.includes(f.id));
+            return getPermittedFormsForRole(role);
+        }
+        const isFormPermitted = id => activeUserRole === 'Administrator' ? true : getUserPermittedForms().some(f => f.id === id);
+        const logAllowed = l => activeUserRole === 'Administrator' ? true : isFormPermitted(l.formId);
+
+        function userFormsCell(u) {
+            if (u.role === 'Administrator') return 'All Forms';
+            const perm = getUserPermittedForms(u.username, u.role).map(f => f.id);
+            return `<details><summary id="ufc_sum_${escH(u.username)}" class="cursor-pointer text-slate-300">${perm.length} of ${forms.length} sheets</summary><div class="mt-2 space-y-1">${forms.map(f => `<label class="flex items-center gap-1.5 text-[11px] text-slate-200"><input type="checkbox" class="accent-blue-600" ${perm.includes(f.id) ? 'checked' : ''} onchange="toggleUserForm('${escH(u.username)}','${escH(f.id)}',this.checked)"> ${escH(f.name)}</label>`).join('')}</div></details>`;
+        }
+        function toggleUserForm(uname, fid, on) {
+            const u = users.find(x => x.username === uname); if (!u) return;
+            const cur = new Set(getUserPermittedForms(uname, u.role).map(f => f.id));
+            on ? cur.add(fid) : cur.delete(fid);
+            u.allowedForms = [...cur];
+            localStorage.setItem('ullswater_users', JSON.stringify(users));
+            const s = document.getElementById('ufc_sum_' + uname); if (s) s.textContent = `${u.allowedForms.length} of ${forms.length} sheets`;
+            logAccess('Sheet access updated for @' + uname, '', false);
+            if (uname === activeUser) { loadStmtCfg(); renderSheetMs(); if (stmtReady) renderStatement(); renderLedgerTable(); }
+        }
+
+        function logAccess(action, detail, merge) {
+            if (!activeUser) return;
+            const sel = getSheetIds().map(i => (forms.find(f => f.id === i) || {}).name).filter(Boolean);
+            const names = sel.length ? sel : getUserPermittedForms().map(f => f.name);
+            const entry = { id: 'ACL-' + Date.now().toString(36), ts: getLocalTimestamp(), t: Date.now(), user: activeUser, role: activeUserRole || '', action, detail: detail || '', sheets: names, scope: sel.length ? 'Selected' : 'All permitted' };
+            const last = accessLog[0];
+            if (merge && last && last.user === entry.user && last.action === action && entry.t - (last.t || 0) < 60000) accessLog[0] = entry; else accessLog.unshift(entry);
+            if (accessLog.length > 500) accessLog.length = 500;
+            try { localStorage.setItem(ACCESS_LOG_KEY, JSON.stringify(accessLog)); } catch (e) {}
+            renderAccessLog();
+        }
+        function updateAccessNote() {
+            const n = document.getElementById('stmt-access-note'); if (!n) return;
+            const p = getUserPermittedForms().length;
+            n.textContent = activeUserRole === 'Administrator' ? '(tick one or more)' : (p ? `(tick one or more · ${p} of ${forms.length} sheets in your access)` : '(no sheets assigned to your access)');
+        }
+        function renderAccessLog() {
+            updateAccessNote();
+            const body = document.getElementById('acl-body'); if (!body) return;
+            const admin = activeUserRole === 'Administrator';
+            const sel = document.getElementById('acl-user'), clr = document.getElementById('acl-clear');
+            if (clr) clr.classList.toggle('hidden', !admin);
+            if (sel) {
+                sel.classList.toggle('hidden', !admin);
+                if (admin) { const cur = sel.value, names = [...new Set(accessLog.map(e => e.user))]; sel.innerHTML = '<option value="">All users</option>' + names.map(n => `<option value="${escH(n)}">@${escH(n)}</option>`).join(''); sel.value = names.includes(cur) ? cur : ''; }
+            }
+            const who = admin ? ((sel && sel.value) || '') : activeUser;
+            const rows = accessLog.filter(e => !who || e.user === who).slice(0, 100);
+            const perm = getUserPermittedForms();
+            const sm = document.getElementById('acl-summary');
+            if (sm) sm.innerHTML = `Signed in as <b class="text-slate-200">@${escH(activeUser || '')}</b> · <span class="font-mono text-blue-300">${escH(activeUserRole || '')}</span> · Access to <b class="text-slate-200">${perm.length}</b> of ${forms.length} sheet(s): ${escH(perm.map(f => f.name).join(', ') || 'none')}${admin ? '' : ' · showing your own activity'}`;
+            body.innerHTML = rows.length ? rows.map(e => `<tr class="hover:bg-slate-800/40"><td class="p-3 text-slate-400 whitespace-nowrap">${escH(e.ts)}</td><td class="p-3 text-slate-200 whitespace-nowrap">@${escH(e.user)}<div class="text-[10px] text-blue-400 font-mono">${escH(e.role)}</div></td><td class="p-3">${escH(e.action)}${e.detail ? `<div class="text-[10px] text-slate-500">${escH(e.detail)}</div>` : ''}</td><td class="p-3 text-slate-300"><span class="text-[10px] text-slate-500 uppercase mr-1">${escH(e.scope)}</span>${escH((e.sheets || []).join(', ') || '—')}</td></tr>`).join('')
+                : '<tr><td colspan="4" class="p-6 text-center text-slate-500">No access activity logged yet.</td></tr>';
+        }
+        function clearAccessLog() {
+            if (activeUserRole !== 'Administrator') return;
+            accessLog = []; try { localStorage.setItem(ACCESS_LOG_KEY, JSON.stringify(accessLog)); } catch (e) {}
+            renderAccessLog(); showToast('Access log cleared.', 'success');
+        }
+
+        // Hook the existing actions (originals are called unchanged)
+        const _renderSheetMs = renderSheetMs;
+        renderSheetMs = function () { _renderSheetMs.apply(this, arguments); updateAccessNote(); };
+        const _applySheetIds = applySheetIds;
+        applySheetIds = function (ids) {
+            if (activeUserRole !== 'Administrator') ids = ids.filter(isFormPermitted);
+            _applySheetIds.call(this, ids);
+            logAccess('Report sheets ticked', '', true);
+        };
+        const _handleLogin = handleLogin;
+        handleLogin = function () {
+            const before = activeUser;
+            _handleLogin.apply(this, arguments);
+            if (activeUser && activeUser !== before) {
+                loadStmtCfg(); renderSheetMs(); if (stmtReady) initStatementTab(); renderLedgerTable();
+                logAccess('Signed in');
+            }
+        };
+        const _logoutUser = logoutUser;
+        logoutUser = function () { logAccess('Signed out'); _logoutUser.apply(this, arguments); };
+        const _switchTabAcl = switchTab;
+        switchTab = function (t) {
+            _switchTabAcl.apply(this, arguments);
+            const el = document.getElementById('tab-' + t);
+            if ((t === 'statement' || t === 'ledger') && el && !el.classList.contains('hidden')) logAccess(t === 'statement' ? 'Opened Dashboard & Statement' : 'Opened Ledger Dashboard', '', true);
+            if (t === 'statement') renderAccessLog();
+        };
+        const _printStatement = printStatement;
+        printStatement = function () {
+            _printStatement.apply(this, arguments);
+            const S = stmtLastData || {};
+            logAccess('Generated / printed Statement of Account', `${S.from || 'start'} → ${S.to || 'end'}`);
+        };
+
+
+        // ===== Email Statement + daily auto-send =====
+        const EMAIL_SCHED_KEY = 'ullswater_stmt_email_sched', EMAIL_FORM_KEY = 'ullswater_stmt_email_form', EMAIL_TOKEN_KEY = 'ullswater_email_token';
+        let emailScheds = (() => { try { return JSON.parse(localStorage.getItem(EMAIL_SCHED_KEY)) || []; } catch (e) { return []; } })();
+        const saveEmailScheds = () => { try { localStorage.setItem(EMAIL_SCHED_KEY, JSON.stringify(emailScheds)); } catch (e) {} };
+        const emVal = id => (document.getElementById(id) || {}).value || '';
+        const EM_PERIODS = { today: 'Today', yesterday: 'Yesterday', last7: 'Last 7 days', month: 'This month', lastmonth: 'Last month', all: 'All dates' };
+        const emParse = t => String(t || '').split(/[,;\s]+/).map(x => x.trim()).filter(Boolean);
+        const emValid = a => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(a);
+
+        let emFormLoaded = false;
+        function saveEmailForm() {
+            const o = {}; ['em-to', 'em-subject', 'em-msg', 'em-time', 'em-period'].forEach(id => o[id] = emVal(id));
+            o['em-late'] = !!(document.getElementById('em-late') || {}).checked;
+            try { localStorage.setItem(EMAIL_FORM_KEY, JSON.stringify(o)); } catch (e) {}
+        }
+        function loadEmailForm() {
+            if (emFormLoaded) return; emFormLoaded = true;
+            let o = {}; try { o = JSON.parse(localStorage.getItem(EMAIL_FORM_KEY)) || {}; } catch (e) {}
+            ['em-to', 'em-subject', 'em-msg', 'em-time', 'em-period'].forEach(id => { const el = document.getElementById(id); if (el && o[id]) el.value = o[id]; });
+            const l = document.getElementById('em-late'); if (l && o['em-late'] === false) l.checked = false;
+        }
+
+        function emPeriodRange(kind) {
+            const n = new Date(), y = n.getFullYear(), m = n.getMonth(), d = n.getDate();
+            if (kind === 'today') return { from: isoDate(n), to: isoDate(n) };
+            if (kind === 'yesterday') { const x = isoDate(new Date(y, m, d - 1)); return { from: x, to: x }; }
+            if (kind === 'last7') return { from: isoDate(new Date(y, m, d - 6)), to: isoDate(n) };
+            if (kind === 'month') return { from: isoDate(new Date(y, m, 1)), to: isoDate(n) };
+            if (kind === 'lastmonth') return { from: isoDate(new Date(y, m - 1, 1)), to: isoDate(new Date(y, m, 0)) };
+            return { from: '', to: '' };
+        }
+        // Runs fn() as the schedule's owner, with the saved Statement Setup and period; everything is restored afterwards.
+        function withSchedCtx(s, fn) {
+            const el = id => document.getElementById(id);
+            const sv = { cfg: stmtCfg, user: activeUser, role: activeUserRole, from: el('stmt-from').value, to: el('stmt-to').value, units: unitSel.stmt };
+            const owner = users.find(u => u.username === s.owner);
+            try {
+                if (!owner) throw new Error('Owner account @' + s.owner + ' no longer exists');
+                activeUser = owner.username; activeUserRole = owner.role;
+                stmtCfg = JSON.parse(JSON.stringify(s.cfg)); unitSel.stmt = [];
+                let r = emPeriodRange(s.period);
+                if (s.period === 'all') { const ds = logs.filter(logAllowed).map(getLogDate).filter(Boolean).sort(); r = { from: ds[0] || '', to: ds[ds.length - 1] || isoDate(new Date()) }; }
+                el('stmt-from').value = r.from; el('stmt-to').value = r.to;
+                return fn();
+            } finally {
+                stmtCfg = sv.cfg; activeUser = sv.user; activeUserRole = sv.role; unitSel.stmt = sv.units;
+                el('stmt-from').value = sv.from; el('stmt-to').value = sv.to;
+            }
+        }
+        function emSheetNames() {
+            const n = getSheetIds().map(i => (forms.find(f => f.id === i) || {}).name).filter(Boolean);
+            if (n.length) return n.join(', ');
+            const p = getUserPermittedForms();
+            return (activeUserRole === 'Administrator' || p.length === forms.length) ? 'All Sheets' : (p.map(f => f.name).join(', ') || 'No sheets assigned');
+        }
+        function buildEmailPayload(S, o) {
+            const sheets = emSheetNames(), from = S.from ? fmtDate(S.from) : 'start', to = S.to ? fmtDate(S.to) : 'latest';
+            const subject = (o.subject || 'Statement of Account – {sheets} – {from} to {to}').replace(/\{sheets\}/g, sheets).replace(/\{from\}/g, from).replace(/\{to\}/g, to).replace(/\{date\}/g, fmtDate(isoDate(new Date())));
+            const doc = buildStatementDocHtml(S, true);
+            const pdfHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>@page{size:A4;margin:10mm}body{margin:0;background:#fff}${STMT_CSS}.soa{padding:0}</style></head><body>${doc}</body></html>`;
+            const td = 'padding:6px 10px;border:1px solid #d6dbe3;font-size:12px;', th = td + 'background:#f1f5f9;font-weight:700;text-align:left;';
+            const kpi = (l, v) => `<td style="${td}"><div style="font-size:10px;color:#64748b;text-transform:uppercase">${l}</div><div style="font-size:16px;font-weight:700;color:#0f172a">${v}</div></td>`;
+            const mx = Math.max(1, ...S.chosen.map(u => Math.abs(u.amount)));
+            const unitRows = S.chosen.map(u => `<tr><td style="${td}">${escH(u.unit)}</td><td style="${td}text-align:right">${u.rows.length}</td><td style="${td}text-align:right">${fmtNet(u.amount)}</td><td style="${td}width:30%"><div style="background:${u.amount < 0 ? '#ef4444' : '#10b981'};height:8px;border-radius:4px;width:${Math.max(2, Math.round(Math.abs(u.amount) / mx * 100))}%"></div></td><td style="${td}text-align:right">${u.hasTarget ? fmtDiff(u.diff) : '—'}</td></tr>`).join('');
+            const summary = `<div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+                ${o.message ? `<p style="font-size:13px;white-space:pre-wrap">${escH(o.message)}</p>` : ''}
+                <h2 style="margin:0 0 2px;font-size:16px">Dashboard Summary</h2>
+                <div style="font-size:12px;color:#475569;margin-bottom:10px">${escH(sheets)} · ${escH(from)} to ${escH(to)}</div>
+                <table style="border-collapse:collapse;width:100%;margin-bottom:12px"><tr>${kpi(S.nDed ? 'Net Total' : 'Total Amount', fmtNet(S.amt))}${kpi('Transactions', S.tx.toLocaleString())}${kpi('Asset Units', S.chosen.length)}${kpi('Difference vs Target', S.diff == null ? '—' : fmtDiff(S.diff))}</tr></table>
+                <table style="border-collapse:collapse;width:100%"><tr><th style="${th}">${escH(stmtCfg.unitField || 'Asset Unit')}</th><th style="${th}text-align:right">Transactions</th><th style="${th}text-align:right">${escH(stmtCfg.amountField || 'Amount')}</th><th style="${th}"></th><th style="${th}text-align:right">vs Target</th></tr>${unitRows || `<tr><td style="${td}" colspan="5">No entries for this period.</td></tr>`}</table>
+                <p style="font-size:11px;color:#64748b;margin-top:10px">The full Statement of Account is attached as a PDF and shown below.</p></div>`;
+            const html = `${summary}<hr style="margin:18px 0;border:0;border-top:1px solid #d6dbe3"><style>${STMT_CSS}</style>${doc}`;
+            const text = `${subject}\n\nTotal: ${fmtNet(S.amt)} | Transactions: ${S.tx}\n` + S.chosen.map(u => `${u.unit}: ${fmtNet(u.amount)} (${u.rows.length})`).join('\n');
+            return { to: o.to.join(','), subject, html, pdfHtml, fileName: 'Statement_' + isoDate(new Date()) + '.pdf', text };
+        }
+        function emStatus(html, kind) {
+            const el = document.getElementById('em-status'); if (!el) return;
+            el.className = 'md:col-span-2 text-[11px] leading-relaxed rounded-lg border p-3 ' + (kind === 'ok' ? 'border-emerald-700 bg-emerald-950/40 text-emerald-200' : kind === 'err' ? 'border-rose-700 bg-rose-950/40 text-rose-200' : 'border-slate-700 bg-slate-950 text-slate-300');
+            el.innerHTML = html;
+        }
+        const emSleep = ms => new Promise(r => setTimeout(r, ms));
+        const emSettingsRaw = () => { try { return JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {}; } catch (e) { return {}; } };
+        const emSettings = () => { const s = emSettingsRaw(); const live = (document.getElementById('setting-webapp-id') || {}).value; if (live && live.trim()) s.webappId = live.trim(); if (s.webappId) s.webappId = String(s.webappId).trim(); return s; };
+        const emUrl = (base, q) => base + (base.includes('?') ? '&' : '?') + q + '&_=' + Date.now();
+        const emToken = () => emVal('setting-token') || localStorage.getItem(EMAIL_TOKEN_KEY) || '';
+        const EM_FIX = 'Connection tab → Copy Script → paste it into Apps Script (replace everything) → Deploy → Manage deployments → Edit → New version → Deploy.';
+
+        // Asks the deployed script whether it can send email (also detects the OLD script, wrong token, missing permission)
+        async function emailCheck() {
+            const s = emSettings(), url = String(s.webappId || '').trim();
+            if (!url) return { ok: false, stage: 1, noUrl: true, msg: 'The Google Apps Script Web App URL is empty. Paste the "Web app" URL (ends with /exec) in step 6 of the setup guide.' };
+            if (!/^https:\/\/script\.google\.com\//.test(url) || !/\/exec(\?|$)/.test(url)) return { ok: false, stage: 1, msg: 'This is not a Web app URL. It must start with https://script.google.com/ and end with /exec (Deploy → Manage deployments → copy "Web app URL"). Addresses ending in /dev or the editor page address do not work.' };
+            let text = '';
+            try { const res = await fetch(emUrl(url, 'action=emailcheck&token=' + encodeURIComponent(emToken())), { cache: 'no-store' }); text = await res.text(); }
+            catch (e) { return { ok: false, stage: 2, msg: 'The browser could not read Google\'s reply. Usual causes: (1) "Who has access" is not set to Anyone, (2) the URL is wrong or that deployment was deleted, (3) no internet. Fix: Deploy → Manage deployments → ✏ Edit → Who has access: Anyone → Deploy.' }; }
+            let j = null; try { j = JSON.parse(text); } catch (e) {}
+            if (!j) { const snip = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140); return { ok: false, stage: 2, msg: 'Google answered with a web page instead of data' + (snip ? ' ("' + snip + '")' : '') + '. Set the deployment to Execute as: Me and Who has access: Anyone, and use the /exec URL.' }; }
+            if (!j.emailSupport || (j.version || 0) < 3) return { ok: false, stage: 3, msg: 'Your Google script is the OLD version. Redo step 1 (Copy Script) and step 3 (paste + Save), then step 5: Deploy → Manage deployments → ✏ → Version: New version → Deploy. ("New deployment" gives a different URL – then paste that new URL in step 6.)' };
+            if (!j.tokenOk) return { ok: false, stage: 4, msg: 'Security Token mismatch. The token in step 6 must be exactly the same as EMAIL_TOKEN near the top of the script (default ULLSWATER-CORP-SECURE-9021). Fix one of them, then re-deploy a New version if you changed the script.' };
+            if (!j.authorized) return { ok: false, stage: 5, msg: 'EMAIL PERMISSION MISSING – Google has not allowed your script to send email yet. Do step 4: in Apps Script choose authorizeEmail → Run → Review permissions → your account → Advanced → Go to … (unsafe) → Allow (you should then get a test email). Then step 5: Deploy → Manage deployments → ✏ → New version → Deploy. See the red “Still says no email permission?” list for more fixes.' };
+            return { ok: true, stage: 6, sender: j.sender, quota: j.quota };
+        }
+        function emChecklistHtml(c) {
+            const lines = ['Web App URL entered, in the right format', 'Browser can reach your Google script', 'Script is the NEW version (has email)', 'Security Token matches', 'Permission to send email granted'];
+            return '<div class="font-bold mb-1">Setup check</div>' + lines.map((t, i) => { const n = i + 1, st = (c.ok || n < c.stage) ? '<span class="text-emerald-400">✓</span>' : n === c.stage ? '<span class="text-rose-400">✗</span>' : '<span class="text-slate-500">–</span>'; return `${st} ${n}. ${t}`; }).join('<br>');
+        }
+        async function checkEmailSetup() {
+            emStatus('<i class="fa-solid fa-spinner fa-spin"></i> Checking your Google script…');
+            const c = await emailCheck();
+            let h = emChecklistHtml(c);
+            h += c.ok ? `<div class="mt-2"><b>✓ Ready.</b> Emails will be sent from <b>${escH(c.sender || 'your Google account')}</b> · ${escH(c.quota)} left today.</div>` : `<div class="mt-2"><b>Fix:</b> ${escH(c.msg)}</div>`;
+            emStatus(h, c.ok ? 'ok' : 'err');
+            emBadge(c);
+            if (c.ok) { const g = document.getElementById('em-guide'); if (g) g.open = false; }
+            else { const g = document.getElementById('em-guide'); if (g) g.open = true; emHighlight(({1:6,2:5,3:3,4:6,5:4})[c.stage]); }
+            return c;
+        }
+        function emBadge(c) {
+            const b = document.getElementById('em-badge'); if (!b) return;
+            const base = 'ml-2 normal-case text-[10px] font-semibold px-2 py-0.5 rounded-full border ';
+            if (c && c.ok) { b.className = base + 'bg-emerald-950 text-emerald-300 border-emerald-800'; b.textContent = '✓ Email ready'; }
+            else if (c && c.noUrl) { b.className = base + 'bg-amber-950 text-amber-300 border-amber-800'; b.textContent = 'Setup needed'; }
+            else if (c) { b.className = base + 'bg-rose-950 text-rose-300 border-rose-800'; b.textContent = '✗ Fix step ' + (({1:6,2:5,3:3,4:6,5:4})[c.stage] || ''); }
+        }
+        function emHighlight(n) {
+            document.querySelectorAll('.em-step').forEach(e => e.classList.remove('ring-2', 'ring-rose-500'));
+            const el = document.getElementById('em-step-' + n); if (!el) return;
+            el.classList.add('ring-2', 'ring-rose-500'); try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+        }
+        function emOpenSheet() {
+            const u = (document.getElementById('setting-sheet-url') || {}).value || '';
+            if (/^https:\/\/docs\.google\.com\//.test(u)) window.open(u, '_blank'); else window.open('https://docs.google.com/spreadsheets/', '_blank');
+        }
+        let emAutoT = 0;
+        async function emAutoBadge() {
+            if (Date.now() - emAutoT < 20000) return; emAutoT = Date.now();
+            try { emBadge(await emailCheck()); } catch (e) {}
+        }
+        // Fallback that needs NO Google permission: downloads the statement and opens your mail app
+        function emMailApp() {
+            const to = emParse(emVal('em-to'));
+            if (!stmtCfg) loadStmtCfg();
+            renderStatement();
+            const P = buildEmailPayload(stmtLastData, { to, subject: emVal('em-subject'), message: emVal('em-msg') });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([P.pdfHtml], { type: 'text/html' })); a.download = P.fileName.replace(/\.pdf$/i, '.html');
+            document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+            setTimeout(() => { window.location.href = 'mailto:' + to.map(encodeURIComponent).join(',') + '?subject=' + encodeURIComponent(P.subject) + '&body=' + encodeURIComponent(P.text.slice(0, 1500) + '\n\n(Attach the downloaded statement file.)'); }, 400);
+            emStatus('<b>Statement file downloaded.</b> Your mail app opened – attach the downloaded file and press Send.', 'ok');
+        }
+        const EM_FALLBACK_BTN = ' <div class="mt-2"><button onclick="emMailApp()" class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-2"><i class="fa-solid fa-envelope-open-text"></i> Send with my mail app instead (no permission needed)</button></div>';
+        function emSyncConn() {
+            const u = emVal('em-url').trim(), t = emVal('em-token').trim();
+            const cur = emSettingsRaw(); cur.webappId = u; try { localStorage.setItem('ullswater_connection_settings', JSON.stringify(cur)); } catch (e) {}
+            const wi = document.getElementById('setting-webapp-id'); if (wi) wi.value = u;
+            const ti = document.getElementById('setting-token'); if (ti && t) ti.value = t;
+            try { localStorage.setItem(EMAIL_TOKEN_KEY, t || (ti ? ti.value : '')); } catch (e) {}
+        }
+        function loadEmConn() {
+            const u = document.getElementById('em-url'), t = document.getElementById('em-token');
+            if (u && !u.value) u.value = emSettings().webappId || '';
+            if (t && !t.value) t.value = emToken() || 'ULLSWATER-CORP-SECURE-9021';
+        }
+        // Sends one email and waits until Google confirms it (or reports why it failed)
+        async function postEmail(payload) {
+            const chk = await emailCheck();
+            if (!chk.ok) return chk;
+            const s = emSettings();
+            const id = payload.id || ('EM-' + Date.now().toString(36) + Math.floor(Math.random() * 1e5).toString(36));
+            const body = JSON.stringify(Object.assign({}, payload, { action: 'email', token: emToken(), id }));
+            fetch(s.webappId, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body }).catch(() => {});
+            for (let i = 0; i < 16; i++) {
+                await emSleep(i === 0 ? 3000 : 2500);
+                try {
+                    const res = await fetch(emUrl(s.webappId, 'action=emailresult&id=' + encodeURIComponent(id)), { cache: 'no-store' });
+                    const j = await res.json();
+                    if (j.emailStatus === 'sent') return { ok: true, confirmed: true, msg: 'Sent from ' + (chk.sender || 'your Google account') };
+                    if (j.emailStatus === 'failed') { const er = j.error || 'Google refused to send the email'; return { ok: false, msg: er + (/authori|permission/i.test(er) ? ' – EMAIL PERMISSION MISSING: do step 4 (run authorizeEmail) and step 5 (Deploy → New version).' : '') }; }
+                } catch (e) { /* keep waiting */ }
+            }
+            return { ok: false, msg: 'No confirmation from Google after 40 seconds (the email may still arrive). Check the Apps Script → Executions page.' };
+        }
+        async function testEmailSetup() {
+            const c = await checkEmailSetup();
+            if (!c.ok) return;
+            const base = document.getElementById('em-status').innerHTML;
+            const to = emParse(emVal('em-to'));
+            if (!to.length || to.some(a => !emValid(a))) { emStatus(base + '<div class="mt-2">Enter recipient email(s) in "Send to" and press Test Email Setup again to send a test message.</div>', 'ok'); return; }
+            emStatus(base + '<div class="mt-2"><i class="fa-solid fa-spinner fa-spin"></i> Sending a test email to ' + escH(to.join(', ')) + '…</div>', 'ok');
+            const r = await postEmail({ to: to.join(','), subject: 'Test – Ullswater Statement email', html: '<p style="font-family:Arial">This is a test email from the Ullswater Fleet Hub. Statement emails will arrive the same way.</p>', fileName: 'Test.pdf' });
+            emStatus(base + '<div class="mt-2">' + (r.ok ? '<b>✓ Test email sent to ' + escH(to.join(', ')) + '.</b> Check the inbox (and spam folder).' : '<b>✗ Test email failed:</b> ' + escH(r.msg)) + '</div>', r.ok ? 'ok' : 'err');
+        }
+
+        async function emailStatementNow() {
+            const to = emParse(emVal('em-to'));
+            if (!to.length || to.some(a => !emValid(a))) { showToast('Enter valid recipient email address(es).', 'error'); return; }
+            if (!stmtCfg) loadStmtCfg();
+            renderStatement();
+            const P = buildEmailPayload(stmtLastData, { to, subject: emVal('em-subject'), message: emVal('em-msg') });
+            const btn = document.getElementById('em-send-btn'); if (btn) btn.disabled = true;
+            emStatus('<i class="fa-solid fa-spinner fa-spin"></i> Sending… waiting for Google to confirm (up to 40 seconds).');
+            const r = await postEmail(P);
+            if (btn) btn.disabled = false;
+            if (r.noUrl) {
+                emStatus('<b>✗</b> ' + escH(r.msg) + EM_FALLBACK_BTN, 'err');
+                return;
+            }
+            if (r.ok) { emStatus('<b>✓ Statement emailed to ' + escH(to.join(', ')) + '.</b> ' + escH(r.msg), 'ok'); showToast('Statement emailed to ' + to.join(', '), 'success'); logAccess('Emailed Statement of Account', 'To: ' + to.join(', ')); }
+            else { emStatus('<b>✗ Email NOT sent:</b> ' + escH(r.msg) + EM_FALLBACK_BTN, 'err'); emBadge(r.stage ? r : { ok: false, stage: 5 }); showToast('Email not sent – see the message in the Email panel.', 'error'); }
+        }
+
+        function saveEmailSchedule() {
+            const to = emParse(emVal('em-to'));
+            if (!to.length || to.some(a => !emValid(a))) { showToast('Enter valid recipient email address(es).', 'error'); return; }
+            if (!/^\d{2}:\d{2}$/.test(emVal('em-time'))) { showToast('Choose the time of day.', 'error'); return; }
+            if (!stmtCfg) loadStmtCfg();
+            saveStmtCfg();
+            const s = { id: 'EMS-' + Date.now().toString(36), owner: activeUser, to, subject: emVal('em-subject'), message: emVal('em-msg'), time: emVal('em-time'), period: emVal('em-period') || 'yesterday',
+                late: !!document.getElementById('em-late').checked, enabled: true, cfg: JSON.parse(JSON.stringify(stmtCfg)), sheetNames: emSheetNames(), lastDate: '', lastStatus: '', lastSent: '', nextTry: 0 };
+            emailScheds.push(s); saveEmailScheds(); renderEmailScheds();
+            logAccess('Daily email auto-send saved', `${s.time} · ${EM_PERIODS[s.period]} · ${to.join(', ')}`);
+            showToast(`Daily auto-send saved for ${s.time}. Keep this page open at that time.`, 'success');
+        }
+        const emCanEdit = s => activeUserRole === 'Administrator' || s.owner === activeUser;
+        function toggleEmailSched(id, on) { const s = emailScheds.find(x => x.id === id); if (!s || !emCanEdit(s)) return; s.enabled = !!on; if (on) { s.nextTry = 0; } saveEmailScheds(); renderEmailScheds(); }
+        function deleteEmailSched(id) { const s = emailScheds.find(x => x.id === id); if (!s || !emCanEdit(s)) return; emailScheds = emailScheds.filter(x => x.id !== id); saveEmailScheds(); renderEmailScheds(); logAccess('Daily email auto-send removed', s.to.join(', ')); }
+        function sendEmailSchedNow(id) { const s = emailScheds.find(x => x.id === id); if (s && emCanEdit(s)) runEmailSchedule(s, true); }
+        function renderEmailScheds() {
+            const body = document.getElementById('em-sched-body'); if (!body) return;
+            const rows = emailScheds.filter(s => activeUserRole === 'Administrator' || s.owner === activeUser);
+            body.innerHTML = rows.length ? rows.map(s => `<tr class="hover:bg-slate-800/40"><td class="p-3 whitespace-nowrap">@${escH(s.owner)}</td><td class="p-3 font-mono text-blue-300 whitespace-nowrap">${escH(s.time)}</td><td class="p-3">${escH(EM_PERIODS[s.period] || s.period)}</td><td class="p-3 text-slate-300">${escH(s.to.join(', '))}</td><td class="p-3 text-slate-400">${escH(s.sheetNames || '')}</td><td class="p-3 text-[11px] ${/^Failed/.test(s.lastStatus) ? 'text-rose-400' : 'text-slate-400'}">${escH(s.lastStatus || 'Not sent yet')}${s.lastSent ? `<div class="text-[10px] text-slate-500">${escH(s.lastSent)}</div>` : ''}</td><td class="p-3 text-right whitespace-nowrap"><label class="inline-flex items-center gap-1 text-[11px] mr-2"><input type="checkbox" class="accent-blue-600" ${s.enabled ? 'checked' : ''} ${emCanEdit(s) ? '' : 'disabled'} onchange="toggleEmailSched('${s.id}', this.checked)"> On</label><button onclick="sendEmailSchedNow('${s.id}')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2 py-1 rounded-lg border border-slate-700 mr-1" title="Send this report now">Send now</button><button onclick="deleteEmailSched('${s.id}')" class="text-rose-400 px-1" title="Delete"><i class="fa-solid fa-trash-can"></i></button></td></tr>`).join('')
+                : '<tr><td colspan="7" class="p-6 text-center text-slate-500">No daily auto-send saved yet.</td></tr>';
+        }
+
+        async function runEmailSchedule(s, manual) {
+            const today = isoDate(new Date());
+            if (!manual) {   // claim today's run first so a second open tab cannot send it twice
+                try { const fresh = (JSON.parse(localStorage.getItem(EMAIL_SCHED_KEY)) || []).find(x => x.id === s.id); if (fresh && fresh.lastDate === today) { s.lastDate = today; return; } } catch (e) {}
+                s.lastDate = today; saveEmailScheds();
+            }
+            let P = null, err = '';
+            try { P = withSchedCtx(s, () => buildEmailPayload(computeStatement(), { to: s.to, subject: s.subject, message: s.message })); } catch (e) { err = e.message || String(e); }
+            if (P && !manual) P.id = 'EM-' + s.id + '-' + today;
+            const r = P ? await postEmail(P) : { ok: false, msg: err };
+            const stamp = getLocalTimestamp();
+            if (r.ok) { s.lastStatus = 'Sent'; s.lastSent = stamp; s.nextTry = 0; }
+            else { s.lastStatus = 'Failed: ' + r.msg; s.lastSent = stamp; if (!manual) { s.lastDate = ''; s.nextTry = Date.now() + 10 * 60000; } }
+            saveEmailScheds(); renderEmailScheds();
+            try { withSchedCtx(s, () => logAccess(r.ok ? (manual ? 'Emailed Statement (manual run of saved schedule)' : 'Scheduled Statement email sent') : 'Scheduled Statement email FAILED', `${s.to.join(', ')}${r.ok ? '' : ' · ' + r.msg}`)); } catch (e) {}
+            renderAccessLog();
+            showToast(r.ok ? `Statement emailed to ${s.to.join(', ')}` : 'Scheduled email failed: ' + r.msg, r.ok ? 'success' : 'error');
+        }
+        let emBusy = false;
+        async function checkEmailSchedules() {
+            if (emBusy) return;
+            const now = new Date(), today = isoDate(now), nowMin = now.getHours() * 60 + now.getMinutes();
+            for (const s of emailScheds) {
+                if (!s.enabled || s.lastDate === today) continue;
+                const [h, m] = String(s.time).split(':').map(Number), at = h * 60 + m;
+                if (isNaN(at) || nowMin < at) continue;
+                if (!s.late && nowMin - at > 10) continue;
+                if (s.nextTry && Date.now() < s.nextTry) continue;
+                emBusy = true; try { await runEmailSchedule(s, false); } finally { emBusy = false; }
+            }
+        }
+        const _switchTabEm = switchTab;
+        switchTab = function (t) { _switchTabEm.apply(this, arguments); if (t === 'statement') { loadEmailForm(); loadEmConn(); renderEmailScheds(); emAutoBadge(); } };
+        (function () {   // keep the Security Token across reloads (the script checks it before sending email)
+            const t = document.getElementById('setting-token'); if (!t) return;
+            try { const st = localStorage.getItem(EMAIL_TOKEN_KEY); if (st) t.value = st; } catch (e) {}
+            t.addEventListener('change', () => { try { localStorage.setItem(EMAIL_TOKEN_KEY, t.value); } catch (e) {} });
+        })();
+        setInterval(checkEmailSchedules, 30000);
+        setTimeout(checkEmailSchedules, 4000);
+
+
+        // Verified copy (the old button said "copied" even when the browser blocked it)
+        async function emCopyScript() {
+            const code = document.getElementById('apps-script-code').value; let ok = false;
+            try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(code); ok = true; } } catch (e) {}
+            if (!ok) { const ta = document.createElement('textarea'); ta.value = code; ta.style.cssText = 'position:fixed;left:0;top:0;opacity:0;'; document.body.appendChild(ta); ta.focus(); ta.select(); try { ok = document.execCommand('copy'); } catch (e) {} ta.remove(); }
+            if (ok) { showToast(`Script copied (${code.length.toLocaleString()} characters). Now paste it in Apps Script.`, 'success'); emStatus(`<b>✓ Script copied</b> (${code.length.toLocaleString()} characters). Continue with step 2.`, 'ok'); }
+            else { showToast('Browser blocked copying – use Download Code.gs instead.', 'error'); emStatus('<b>✗ The browser blocked copying.</b> Press <b>Download Code.gs</b>, open the file in Notepad, select all and copy.', 'err'); }
+        }
+        function emDownloadScript() {
+            const code = document.getElementById('apps-script-code').value;
+            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([code], { type: 'text/plain' })); a.download = 'Code.gs';
+            document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+            emStatus('<b>✓ Code.gs downloaded.</b> Open it in Notepad, select all, copy, then paste into Apps Script (step 3).', 'ok');
+        }
+        copyAppsScript = function () { emCopyScript(); };
 
         function showToast(message, type = 'success') {
             const container = document.getElementById('toast-container');
