@@ -623,6 +623,7 @@
                     <!-- MAIN: dashboard + statement preview -->
                     <div class="space-y-6 min-w-0">
                         <div id="stmt-kpis" class="grid grid-cols-2 xl:grid-cols-4 gap-3"></div>
+                        <div id="stmt-adj-card" class="bg-slate-900 border border-amber-700/40 rounded-2xl overflow-hidden"></div>
 
                         <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
                             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
@@ -3062,6 +3063,7 @@ function doGet(e) {
             c.targets = c.targets || {};
             c.modes = c.modes || {};
             const da = defaultAdj(); c.adj = Object.assign(da, c.adj || {});
+            if (c.adj.taxFormula === 'gross * rate / 100') c.adj.taxFormula = 'base * rate / 100';   // migrate old default
             if (!Array.isArray(c.adj.items)) c.adj.items = da.items;
             while (c.adj.items.length < 5) c.adj.items.push({ label: '', sign: 'ded', type: 'fixed', value: '' });
             stmtCfg = c;
@@ -3188,49 +3190,161 @@ function doGet(e) {
             let addT = 0, dedT = 0, nDed = 0;
             chosen.forEach(u => u.rows.forEach(l => { const a = getLogAmount(l); if (getLogMode(l) === 'ded') { dedT += a; nDed++; } else addT += a; }));
             const R = { addT, dedT, nDed, from, to, sel: selList.length ? selList.join(', ') : '__ALL__', selList, unitList, chosen, tx, amt, tgt, diff, voided, hasTarget: tgtUnits.length > 0 };
-            R.adj = computeAdjustments(R.amt);
+            R.adj = computeAdjustments(R.amt, { tx, units: chosen.length, additional: addT, marked: dedT });
             return R;
         }
 
         // ===== Tax & other deductions (receipt-style) =====
-        function defaultAdj() { return { taxLabel: 'Withholding Tax', taxRate: '', otherLabel: 'Other Deductions', otherAmt: '', items: Array.from({ length: 5 }, () => ({ label: '', sign: 'ded', type: 'fixed', value: '' })) }; }
+        function defaultAdj() { return { taxLabel: 'Withholding Tax', taxRate: '', taxFormula: 'base * rate / 100', phType: '', vatIncl: false, otherLabel: 'Other Deductions', otherAmt: '', items: Array.from({ length: 5 }, () => ({ label: '', sign: 'ded', type: 'fixed', value: '' })) }; }
         const numOf = v => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
-        function computeAdjustments(gross) {
+        const TAX_DEF = 'base * rate / 100';
+        // Philippine BIR withholding types (rates per RR 2-98 as amended by RR 11-2018 and RR 24-2025)
+        const PH_TYPES = [
+            { g: 'Purchases from suppliers (Top Withholding Agents)', key: 'goods', name: 'Purchase of goods', short: 'EWT – Goods', atc: 'WC158 / WI158', rate: 1, note: 'Top withholding agents buying from local / resident suppliers of goods.' },
+            { g: 'Purchases from suppliers (Top Withholding Agents)', key: 'services', name: 'Purchase of services', short: 'EWT – Services', atc: 'WC160 / WI160', rate: 2, note: 'Top withholding agents buying from local / resident suppliers of services (e.g. hauling).' },
+            { g: 'Purchases from suppliers (Top Withholding Agents)', key: 'wholesale', name: 'Goods for wholesale (from manufacturer / direct importer)', short: 'EWT – Wholesale goods', atc: '', rate: 0.5, note: 'Preferential 0.5% for covered goods intended for wholesale (RR 24-2025, RMC 79-2026).' },
+            { g: 'Contractors & rentals', key: 'contractor', name: 'Payments to contractors', short: 'EWT – Contractor', atc: 'WC120 / WI120', rate: 2, note: 'Payments to certain contractors, individual or corporate.' },
+            { g: 'Contractors & rentals', key: 'rental', name: 'Rentals (real / personal property)', short: 'EWT – Rental', atc: 'WC100 / WI100', rate: 5, note: 'Gross rental. Personal property rentals apply to the amount above ₱10,000 a year.' },
+            { g: 'Professional fees & commissions', key: 'prof5', name: 'Professional fees – individual, income ≤ ₱3M', short: 'EWT – Professional fee (individual)', atc: 'WI010', rate: 5, note: 'Needs the payee’s sworn declaration of gross income not above ₱3 million.' },
+            { g: 'Professional fees & commissions', key: 'prof10', name: 'Professional fees – individual, > ₱3M or no declaration', short: 'EWT – Professional fee (individual)', atc: 'WI011', rate: 10, note: 'Applies when income exceeds ₱3 million or no sworn declaration was given.' },
+            { g: 'Professional fees & commissions', key: 'profc10', name: 'Professional fees – non-individual, ≤ ₱720,000', short: 'EWT – Professional fee (corporate)', atc: 'WC010', rate: 10, note: 'Corporate payee with current-year gross income up to ₱720,000.' },
+            { g: 'Professional fees & commissions', key: 'profc15', name: 'Professional fees – non-individual, > ₱720,000', short: 'EWT – Professional fee (corporate)', atc: 'WC011', rate: 15, note: 'Corporate payee with current-year gross income above ₱720,000.' },
+            { g: 'Professional fees & commissions', key: 'comm', name: 'Commissions (brokers / agents)', short: 'EWT – Commission', atc: '', rate: 10, note: 'Commissions to brokers and agents.' },
+            { g: 'VAT & percentage tax', key: 'vatw', name: 'Government – creditable VAT withholding', short: 'Withholding VAT (government)', atc: '', rate: 5, note: 'Creditable VAT withheld on payments by government. Confirm the base with your accountant.' },
+            { g: 'VAT & percentage tax', key: 'pct', name: 'Percentage tax (non-VAT)', short: 'Percentage Tax', atc: '', rate: 3, note: 'Non-VAT registered businesses: 3% of gross receipts.' },
+            { g: 'Other', key: 'custom', name: 'Other / enter my own rate', short: 'Withholding Tax', atc: '', rate: '', note: 'Type any rate in the Rate box.' }
+        ];
+        const TAX_PRESETS = [
+            ['Tax base × Rate %  (default)', TAX_DEF],
+            ['Gross × Rate % (ignore the VAT base)', 'gross * rate / 100'],
+            ['(Gross − Other deductions) × Rate %', '(gross - other) * rate / 100'],
+            ['Additional total (before marked deductions) × Rate %', 'additional * rate / 100'],
+            ['Only the excess over an exemption', 'max(0, gross - 250000) * rate / 100'],
+            ['Rate % + fixed amount', 'gross * rate / 100 + 100']
+        ];
+        function evalFormula(src, vars) {
+            src = String(src || '').trim();
+            if (!src) return { ok: false, err: 'Enter a formula' };
+            if (!/^[0-9A-Za-z_+\-*/().,%\s^]*$/.test(src)) return { ok: false, err: 'Invalid character in formula' };
+            const fns = { min: Math.min, max: Math.max, round: Math.round, abs: Math.abs, floor: Math.floor, ceil: Math.ceil, sqrt: Math.sqrt };
+            for (const id of (src.match(/[A-Za-z_]\w*/g) || [])) if (!(id in vars) && !(id in fns)) return { ok: false, err: 'Unknown name "' + id + '" — use: ' + Object.keys(vars).join(', ') };
+            const js = src.replace(/\^/g, '**').replace(/(\d+(?:\.\d+)?|[A-Za-z_]\w*)\s*%/g, '($1/100)');
+            if (js.includes('%')) return { ok: false, err: 'Use % right after a number or name' };
+            try {
+                const v = new Function(...Object.keys(vars), ...Object.keys(fns), '"use strict"; return (' + js + ');')(...Object.values(vars), ...Object.values(fns));
+                if (typeof v !== 'number' || !isFinite(v)) return { ok: false, err: 'Formula result is not a number' };
+                return { ok: true, value: v };
+            } catch (e) { return { ok: false, err: 'Formula error' }; }
+        }
+        function computeAdjustments(gross, ctx) {
             const a = (stmtCfg && stmtCfg.adj) || defaultAdj();
             const base = Math.max(0, gross);              // percentages are taken from the gross amount
             const lines = []; let ded = 0, add = 0;
-            const push = (label, formula, amount, sign) => { lines.push({ label, formula, amount, sign }); if (sign < 0) ded += amount; else add += amount; };
-            const rate = numOf(a.taxRate);
-            if (rate) push(a.taxLabel || 'Tax', rate + '% × ' + fmtMoney(base), base * rate / 100, -1);
-            const oth = numOf(a.otherAmt);
-            if (oth) push(a.otherLabel || 'Other Deductions', 'Fixed amount', oth, -1);
+            const push = (label, formula, amount, sign, key, absAmt) => { if (absAmt != null) amount = absAmt; lines.push({ label, formula, amount, sign, key }); if (sign < 0) ded += amount; else add += amount; };
+            const rate = numOf(a.taxRate), oth = numOf(a.otherAmt);
+            const addAmt = (ctx && ctx.additional != null) ? ctx.additional : gross, markedAmt = (ctx && ctx.marked) || 0;
+            // gross / net = Additional total minus the rows marked as Deduction (this is the base for tax)
+            const vatIncl = !!a.vatIncl, taxBase = vatIncl ? base / 1.12 : base;   // VAT-registered payee: gross includes 12% VAT, tax base excludes it
+            const vars = { gross: base, net: base, base: taxBase, vat: base - taxBase, additional: addAmt, marked: markedAmt, deductions: markedAmt, rate, other: oth, tx: (ctx && ctx.tx) || 0, units: (ctx && ctx.units) || 0 };
+            let taxErr = '';
+            const fsrc = a.taxFormula || TAX_DEF;
+            if (rate || (fsrc.trim() !== TAX_DEF && fsrc.trim() !== 'gross * rate / 100')) {
+                const r = evalFormula(fsrc, vars);
+                if (!r.ok) taxErr = r.err;
+                else if (r.value || rate) {
+                    const shown = fsrc.trim().replace(/[A-Za-z_]\w*/g, id => id in vars ? (id === 'rate' || id === 'tx' || id === 'units' ? String(vars[id]) : fmtMoney(vars[id])) : id);
+                    push(a.taxLabel || 'Tax', shown, r.value, r.value < 0 ? 1 : -1, 'tax', Math.abs(r.value));
+                }
+            }
+            if (oth) push(a.otherLabel || 'Other Deductions', 'Fixed amount', oth, -1, 'other');
             (a.items || []).forEach((it, i) => {
                 const v = numOf(it.value); if (!v) return;
                 const sign = it.sign === 'add' ? 1 : -1, label = it.label || ('Item ' + (i + 1));
-                if (it.type === 'pct') push(label, v + '% × ' + fmtMoney(base), base * v / 100, sign);
-                else push(label, 'Fixed amount', v, sign);
+                if (it.type === 'pct') push(label, v + '% × ' + fmtMoney(base), base * v / 100, sign, 'i' + i);
+                else push(label, 'Fixed amount', v, sign, 'i' + i);
             });
-            return { lines, ded, add, gross, final: gross - ded + add, active: lines.length > 0 };
+            return { lines, ded, add, gross, taxErr, vars, vatIncl, base: taxBase, vat: base - taxBase, additional: addAmt, marked: markedAmt, final: gross - ded + add, active: lines.length > 0 };
         }
         function renderAdjInputs() {
             const box = document.getElementById('stmt-adj-box'); if (!box || !stmtCfg) return;
             const a = stmtCfg.adj;
             const inp = 'w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2 py-1.5';
-            let h = `<div class="text-[9px] font-bold text-amber-400 uppercase tracking-wider">Tax (computed: Gross × Rate %)</div>
-<div class="grid grid-cols-[1fr_80px] gap-2"><input type="text" id="adj-tax-label" value="${escH(a.taxLabel)}" oninput="onAdjChange()" placeholder="Tax name" class="${inp}"><div class="relative"><input type="number" step="0.01" min="0" id="adj-tax-rate" value="${escH(a.taxRate)}" oninput="onAdjChange()" placeholder="0" class="${inp} pr-6 text-right"><span class="absolute right-2 top-1.5 text-xs text-slate-500">%</span></div></div>
+            const amt = k => `<div id="adj-amt-${k}" class="text-right text-[10px] font-mono text-slate-500 mt-0.5">—</div>`;
+            let h = `<div class="bg-emerald-900/30 border border-emerald-700/40 rounded-lg px-3 py-2 flex items-center justify-between"><span class="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">Gross Amount (net of marked deductions)</span><span id="adj-gross" class="text-sm font-bold text-emerald-300 font-mono">0.00</span></div>
+<div class="rounded-xl border border-amber-700/40 bg-gradient-to-b from-amber-900/20 to-slate-900/60 p-3 space-y-2.5">
+<div class="flex items-center gap-2"><span class="text-lg leading-none">🇵🇭</span><div><div class="text-[11px] font-bold text-amber-300 uppercase tracking-wider">Withholding Tax · BIR Philippines</div><div class="text-[9px] text-slate-400">Pick the type of payment — the rate fills in automatically</div></div></div>
+<div><label class="block text-[9px] font-bold text-slate-400 uppercase mb-1">① Type of income payment</label>
+<select id="adj-ph-type" onchange="onPhType(this.value)" class="${inp}"><option value="">— Select withholding type —</option>${[...new Set(PH_TYPES.map(t => t.g))].map(g => `<optgroup label="${escH(g)}">${PH_TYPES.filter(t => t.g === g).map(t => `<option value="${t.key}" ${a.phType === t.key ? 'selected' : ''}>${escH(t.name)}${t.rate !== '' ? ' — ' + t.rate + '%' : ''}</option>`).join('')}</optgroup>`).join('')}</select>
+<div id="adj-ph-info" class="text-[9px] text-slate-400 mt-1 leading-relaxed"></div></div>
+<label class="flex items-start gap-2 cursor-pointer bg-slate-950/50 border border-slate-800 rounded-lg p-2"><input type="checkbox" id="adj-vat" ${a.vatIncl ? 'checked' : ''} onchange="onAdjChange()" class="mt-0.5 accent-amber-500"><span class="text-[10px] text-slate-300 leading-snug"><b class="text-white">② Payee is VAT-registered</b><br><span class="text-slate-400">Gross includes 12% VAT, so the tax base = gross ÷ 1.12</span></span></label>
+<div class="grid grid-cols-[1fr_84px] gap-2"><div><label class="block text-[9px] font-bold text-slate-400 uppercase mb-1">Label on receipt</label><input type="text" id="adj-tax-label" value="${escH(a.taxLabel)}" oninput="onAdjChange()" placeholder="Tax name" class="${inp}"></div>
+<div><label class="block text-[9px] font-bold text-slate-400 uppercase mb-1">③ Rate</label><div class="relative"><input type="number" step="0.01" min="0" id="adj-tax-rate" value="${escH(a.taxRate)}" oninput="onAdjChange()" placeholder="0" class="${inp} pr-6 text-right"><span class="absolute right-2 top-1.5 text-xs text-slate-500">%</span></div></div></div>
+<div id="adj-ph-breakdown" class="rounded-lg bg-slate-950/70 border border-slate-800 p-2.5 text-[10.5px] font-mono space-y-1"></div>
+<div class="text-[9px] text-slate-500 leading-relaxed">Rates follow BIR rules (RR 2-98 as amended by RR 11-2018 and RR 24-2025). Always confirm the right ATC and rate for your payee with your accountant.</div>
+</div>
+<details class="bg-slate-900/70 border border-slate-800 rounded-lg p-2"><summary class="text-[10px] font-bold text-slate-300 uppercase cursor-pointer">Advanced: custom formula</summary>
+<div class="space-y-1.5 mt-2">${amt('tax')}
+<select id="adj-tax-preset" onchange="onTaxPreset(this.value)" class="${inp}">${TAX_PRESETS.map((x, i) => `<option value="${i}" ${x[1] === a.taxFormula ? 'selected' : ''}>${escH(x[0])}</option>`).join('')}<option value="custom" ${TAX_PRESETS.some(x => x[1] === a.taxFormula) ? '' : 'selected'}>Custom formula</option></select>
+<input type="text" id="adj-tax-formula" value="${escH(a.taxFormula)}" oninput="onAdjChange()" spellcheck="false" placeholder="base * rate / 100" class="${inp} font-mono">
+<div id="adj-vars" class="text-[9px] font-mono text-slate-400 leading-relaxed"></div>
+<div class="text-[9px] text-slate-500 leading-relaxed">Names: <b class="text-slate-300">base</b> (tax base), <b class="text-slate-300">gross</b> / <b class="text-slate-300">net</b> (gross net of marked deductions), <b class="text-slate-300">vat</b>, <b class="text-slate-300">additional</b>, <b class="text-slate-300">marked</b>, <b class="text-slate-300">rate</b>, <b class="text-slate-300">other</b>, <b class="text-slate-300">tx</b>, <b class="text-slate-300">units</b>. Use + − * / ( ) and max, min, round, abs. Example: <span class="font-mono text-slate-300">max(0, base - 250000) * rate%</span></div></div></details>
 <div class="text-[9px] font-bold text-amber-400 uppercase tracking-wider pt-1">Other Deductions (fixed amount)</div>
-<div class="grid grid-cols-[1fr_100px] gap-2"><input type="text" id="adj-other-label" value="${escH(a.otherLabel)}" oninput="onAdjChange()" placeholder="Description" class="${inp}"><input type="number" step="0.01" min="0" id="adj-other-amt" value="${escH(a.otherAmt)}" oninput="onAdjChange()" placeholder="0.00" class="${inp} text-right"></div>
+<div class="grid grid-cols-[1fr_100px] gap-2"><input type="text" id="adj-other-label" value="${escH(a.otherLabel)}" oninput="onAdjChange()" placeholder="Description" class="${inp}"><input type="number" step="0.01" min="0" id="adj-other-amt" value="${escH(a.otherAmt)}" oninput="onAdjChange()" placeholder="0.00" class="${inp} text-right"></div>${amt('other')}
 <div class="text-[9px] font-bold text-amber-400 uppercase tracking-wider pt-1">Additional Items (up to 5)</div>`;
             a.items.slice(0, 5).forEach((it, i) => {
                 h += `<div class="bg-slate-900/70 border border-slate-800 rounded-lg p-2 space-y-1.5"><input type="text" id="adj-i${i}-label" value="${escH(it.label)}" oninput="onAdjChange()" placeholder="Item ${i + 1} description" class="${inp}">
-<div class="grid grid-cols-[84px_1fr_1fr] gap-1.5"><select id="adj-i${i}-sign" onchange="onAdjChange()" class="${inp}"><option value="ded" ${it.sign !== 'add' ? 'selected' : ''}>− Deduct</option><option value="add" ${it.sign === 'add' ? 'selected' : ''}>+ Add</option></select><select id="adj-i${i}-type" onchange="onAdjChange()" class="${inp}"><option value="fixed" ${it.type !== 'pct' ? 'selected' : ''}>Fixed</option><option value="pct" ${it.type === 'pct' ? 'selected' : ''}>% of gross</option></select><input type="number" step="0.01" min="0" id="adj-i${i}-value" value="${escH(it.value)}" oninput="onAdjChange()" placeholder="0.00" class="${inp} text-right"></div></div>`;
+<div class="grid grid-cols-[84px_1fr_1fr] gap-1.5"><select id="adj-i${i}-sign" onchange="onAdjChange()" class="${inp}"><option value="ded" ${it.sign !== 'add' ? 'selected' : ''}>− Deduct</option><option value="add" ${it.sign === 'add' ? 'selected' : ''}>+ Add</option></select><select id="adj-i${i}-type" onchange="onAdjChange()" class="${inp}"><option value="fixed" ${it.type !== 'pct' ? 'selected' : ''}>Fixed</option><option value="pct" ${it.type === 'pct' ? 'selected' : ''}>% of gross</option></select><input type="number" step="0.01" min="0" id="adj-i${i}-value" value="${escH(it.value)}" oninput="onAdjChange()" placeholder="0.00" class="${inp} text-right"></div>${amt('i' + i)}</div>`;
             });
-            box.innerHTML = h;
+            h += `<div class="bg-amber-900/30 border border-amber-700/40 rounded-lg px-3 py-2 space-y-1">
+<div class="flex justify-between text-[10px] text-slate-300"><span>Total Deductions</span><span id="adj-ded" class="font-mono text-rose-300">0.00</span></div>
+<div class="flex justify-between text-[10px] text-slate-300"><span>Total Additions</span><span id="adj-add" class="font-mono text-emerald-300">0.00</span></div>
+<div class="flex justify-between border-t border-amber-700/40 pt-1"><span class="text-[10px] font-bold text-amber-300 uppercase tracking-wider">Net Amount</span><span id="adj-net" class="text-sm font-bold text-amber-300 font-mono">0.00</span></div></div>`;
+            box.innerHTML = h; updateAdjPanel();
+        }
+        function updateAdjPanel() {
+            const S = stmtLastData; if (!S || !S.adj) return;
+            const A = S.adj, set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+            set('adj-vars', A.vars ? `additional ${fmtMoney(A.additional)} − marked ${fmtMoney(A.marked)} = gross ${fmtMoney(A.vars.gross)} · other ${fmtMoney(A.vars.other)} · rate ${A.vars.rate}` : '');
+            const t = PH_TYPES.find(x => x.key === (stmtCfg.adj || {}).phType);
+            set('adj-ph-info', t ? (t.atc ? 'ATC ' + t.atc + ' · ' : '') + (t.rate !== '' ? t.rate + '% · ' : '') + t.note : '');
+            const bd = document.getElementById('adj-ph-breakdown');
+            if (bd && A.vars) {
+                const row = (l, v, c) => `<div class="flex justify-between gap-2 ${c || 'text-slate-300'}"><span>${l}</span><span>${v}</span></div>`;
+                const tl = A.lines.find(x => x.key === 'tax');
+                const custom = ![TAX_DEF, 'gross * rate / 100'].includes(String((stmtCfg.adj || {}).taxFormula || TAX_DEF).trim());
+                let h = row('Gross amount', fmtNet(A.gross));
+                if (A.vatIncl) h += row('Less: 12% VAT included', '(' + fmtMoney(A.vat) + ')', 'text-slate-400');
+                h += row('Tax base', fmtMoney(A.base), 'text-white font-bold border-t border-slate-700 pt-1');
+                h += row('× Rate', A.vars.rate + '%');
+                h += A.taxErr ? `<div class="text-rose-400 font-sans">⚠ ${escH(A.taxErr)}</div>` : row('= Withholding tax' + (custom ? ' (custom formula)' : ''), tl ? fmtMoney(tl.amount) : '0.00', 'text-amber-300 font-bold border-t border-slate-700 pt-1');
+                bd.innerHTML = h;
+            }
+            set('adj-gross', fmtNet(A.gross)); set('adj-ded', A.ded ? '(' + fmtMoney(A.ded) + ')' : '0.00'); set('adj-add', fmtMoney(A.add)); set('adj-net', fmtNet(A.final));
+            ['tax', 'other', 'i0', 'i1', 'i2', 'i3', 'i4'].forEach(k => {
+                const l = A.lines.find(x => x.key === k);
+                if (k === 'tax' && A.taxErr) { const el = document.getElementById('adj-amt-tax'); if (el) { el.textContent = '⚠ ' + A.taxErr; el.className = 'text-right text-[10px] font-mono text-rose-400 mt-0.5'; } return; }
+                { const el = document.getElementById('adj-amt-' + k); if (el && k === 'tax') el.className = 'text-right text-[10px] font-mono text-slate-500 mt-0.5'; }
+                set('adj-amt-' + k, l ? l.formula + ' = ' + (l.sign < 0 ? '(' + fmtMoney(l.amount) + ')' : '+' + fmtMoney(l.amount)) : '—');
+            });
+        }
+        function onPhType(key) {
+            const t = PH_TYPES.find(x => x.key === key);
+            const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+            if (t) { set('adj-tax-rate', t.rate); set('adj-tax-label', t.short + (t.atc ? ' (' + t.atc + ')' : '')); set('adj-tax-formula', TAX_DEF); }
+            onAdjChange();
+        }
+        function onTaxPreset(v) {
+            const f = document.getElementById('adj-tax-formula'); if (!f) return;
+            if (v !== 'custom' && TAX_PRESETS[v]) f.value = TAX_PRESETS[v][1];
+            onAdjChange();
         }
         function onAdjChange() {
             if (!stmtCfg) return;
             const g = id => (document.getElementById(id) || {}).value || '';
             const a = stmtCfg.adj;
+            a.taxFormula = g('adj-tax-formula') || TAX_DEF;
+            a.phType = g('adj-ph-type'); a.vatIncl = !!(document.getElementById('adj-vat') || {}).checked;
+            const ps = document.getElementById('adj-tax-preset'); if (ps) { const i = TAX_PRESETS.findIndex(x => x[1] === a.taxFormula); ps.value = i >= 0 ? String(i) : 'custom'; }
             a.taxLabel = g('adj-tax-label'); a.taxRate = g('adj-tax-rate'); a.otherLabel = g('adj-other-label'); a.otherAmt = g('adj-other-amt');
             a.items = [0, 1, 2, 3, 4].map(i => ({ label: g('adj-i' + i + '-label'), sign: g('adj-i' + i + '-sign') || 'ded', type: g('adj-i' + i + '-type') || 'fixed', value: g('adj-i' + i + '-value') }));
             saveStmtCfg(); renderStatement();
@@ -3282,6 +3396,24 @@ function doGet(e) {
                 }
             }
             document.getElementById('stmt-preview').innerHTML = buildStatementDocHtml(S, false);
+            updateAdjPanel(); renderAdjCard(S);
+        }
+        // live receipt on the dashboard (right side): gross -> tax / deductions -> net
+        function renderAdjCard(S) {
+            const el = document.getElementById('stmt-adj-card'); if (!el) return;
+            const A = S.adj, neg = n => n < 0 ? '(' + fmtMoney(-n) + ')' : fmtMoney(n);
+            const rows = A.lines.map(l => `<tr class="border-t border-slate-800/70"><td class="p-2.5 text-slate-200">${l.sign < 0 ? 'Less: ' : 'Add: '}${escH(l.label)}</td><td class="p-2.5 text-slate-500 font-mono text-[10px]">${escH(l.formula)}</td><td class="p-2.5 text-right font-mono ${l.sign < 0 ? 'text-rose-300' : 'text-emerald-300'}">${l.sign < 0 ? '(' + fmtMoney(l.amount) + ')' : '+' + fmtMoney(l.amount)}</td></tr>`).join('');
+            el.innerHTML = `<div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap"><h4 class="text-xs font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-receipt text-amber-400 mr-1.5"></i>Tax &amp; Deductions Computation</h4><span class="text-[10px] text-slate-400">Edit the fields in the Tax &amp; Deductions panel — this updates live</span></div>
+<table class="w-full text-xs"><tbody>
+${S.nDed ? `<tr><td class="p-2.5 text-slate-300" colspan="2">Total Additional</td><td class="p-2.5 text-right font-mono text-slate-200">${fmtMoney(S.addT)}</td></tr><tr class="border-t border-slate-800/70"><td class="p-2.5 text-slate-300" colspan="2">Less: Marked Deductions</td><td class="p-2.5 text-right font-mono text-rose-300">(${fmtMoney(S.dedT)})</td></tr>` : ''}
+<tr class="bg-emerald-900/20 border-t border-slate-800/70"><td class="p-2.5 font-bold text-emerald-300 uppercase" colspan="2">Gross Amount${S.nDed ? ' (net of marked deductions)' : ''}</td><td class="p-2.5 text-right font-bold font-mono text-emerald-300">${neg(A.gross)}</td></tr>
+${A.vatIncl ? `<tr class="border-t border-slate-800/70"><td class="p-2.5 italic text-slate-400" colspan="2">Tax base (VAT-exclusive: gross ÷ 1.12)</td><td class="p-2.5 text-right font-mono italic text-slate-300">${fmtMoney(A.base)}</td></tr>` : ''}
+${A.taxErr ? `<tr class="border-t border-slate-800/70"><td class="p-2.5 text-rose-400" colspan="3">⚠ Tax formula: ${escH(A.taxErr)}</td></tr>` : ''}
+${rows || '<tr class="border-t border-slate-800/70"><td class="p-3 text-slate-500" colspan="3">No tax or deductions entered yet. Fill in a tax rate or amount in the Tax &amp; Deductions panel.</td></tr>'}
+${A.ded ? `<tr class="border-t border-slate-700 bg-slate-800/40"><td class="p-2.5 font-semibold text-slate-300" colspan="2">Total Deductions</td><td class="p-2.5 text-right font-mono text-rose-300">(${fmtMoney(A.ded)})</td></tr>` : ''}
+${A.add ? `<tr class="bg-slate-800/40"><td class="p-2.5 font-semibold text-slate-300" colspan="2">Total Additions</td><td class="p-2.5 text-right font-mono text-emerald-300">+${fmtMoney(A.add)}</td></tr>` : ''}
+<tr class="border-t border-amber-700/50 bg-amber-900/30"><td class="p-3 font-bold text-amber-300 uppercase" colspan="2">Net Amount Payable</td><td class="p-3 text-right font-bold text-base font-mono text-amber-300">${neg(A.final)}</td></tr>
+</tbody></table>`;
         }
 
         function computeStatementUnitsOnly() {
@@ -3367,18 +3499,20 @@ function doGet(e) {
             const rows = A.lines.map(l => `<tr><td>${l.sign < 0 ? 'Less: ' : 'Add: '}${escH(l.label)}</td><td class="f">${escH(l.formula)}</td><td class="a-r" style="color:${l.sign < 0 ? '#b91c1c' : '#047857'}">${l.sign < 0 ? '(' + fmtMoney(l.amount) + ')' : '+' + fmtMoney(l.amount)}</td></tr>`).join('');
             return `<div class="sec">Computation of Net Amount</div>
 <table class="rcpt"><tbody>
+${S.nDed ? `<tr><td colspan="2">Total Additional</td><td class="a-r">${fmtMoney(S.addT)}</td></tr><tr><td colspan="2">Less: Marked Deductions</td><td class="a-r" style="color:#b91c1c">(${fmtMoney(S.dedT)})</td></tr>` : ''}
 <tr class="r-gross"><td colspan="2">GROSS AMOUNT${S.nDed ? ' (net of marked deductions)' : ''}</td><td class="a-r">${neg(A.gross)}</td></tr>
+${A.vatIncl ? `<tr><td colspan="2" style="font-style:italic;color:#555">Tax base (VAT-exclusive: gross ÷ 1.12)</td><td class="a-r" style="font-style:italic;color:#555">${fmtMoney(A.base)}</td></tr>` : ''}
 ${rows}
 ${A.ded ? `<tr class="r-sub"><td colspan="2">Total Deductions</td><td class="a-r">(${fmtMoney(A.ded)})</td></tr>` : ''}
 ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r">+${fmtMoney(A.add)}</td></tr>` : ''}
 <tr class="r-final"><td colspan="2">NET AMOUNT PAYABLE</td><td class="a-r">${neg(A.final)}</td></tr>
 </tbody></table>
-<div class="note">Net Amount = Gross Amount − Total Deductions + Total Additions. Percentages are computed on the Gross Amount.</div>`;
+<div class="note">Net Amount = Gross Amount − Total Deductions + Total Additions. Tax is computed using the formula shown on its line.</div>`;
         }
 
         const STMT_CSS = `.soa .rcpt{width:62%;margin-left:auto;border:1px solid #0f2a4a;border-collapse:collapse;font-size:10.5px}
 .soa .rcpt td{padding:5px 8px;border-bottom:1px dashed #c3cddb;vertical-align:middle}
-.soa .rcpt td.f{color:#6b7686;font-size:9.5px;font-family:monospace;white-space:nowrap}
+.soa .rcpt td.f{color:#6b7686;font-size:9.5px;font-family:monospace;overflow-wrap:anywhere}
 .soa .rcpt .r-gross td{background:#e8eef6;font-weight:800;color:#0f2a4a;border-bottom:1px solid #0f2a4a}
 .soa .rcpt .r-sub td{font-weight:700;background:#f1f4f8;border-top:1px solid #9aa8ba}
 .soa .rcpt .r-final td{background:#0f2a4a;color:#fff;font-weight:800;font-size:12px;padding:8px;border-bottom:0}
