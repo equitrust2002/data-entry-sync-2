@@ -1147,27 +1147,62 @@
                                     <button type="button" onclick="copyAppsScript()" class="bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">Copy Script</button>
                                 </div>
                                 <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this, replace everything → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the /exec URL above. <b>Re-deploy as a NEW VERSION after pasting this update</b> (Deploy → Manage deployments → Edit → New version). For email, also run <b>authorizeEmail</b> once and press Allow – full steps are in Statement → Email panel.</p>
-                                <textarea id="apps-script-code" readonly rows="12" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet receiver
-// Creates the tab + columns automatically, incl. "Scanned Ticket".
-// Re-sending the same Ticket ID updates its row (no duplicates).
+                                <textarea id="apps-script-code" readonly rows="12" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet receiver  (v4: real-time, shared settings, admin log)
+// Ledger tabs: one tab per Data Entry Sheet. Hidden helper tabs: _Config (shared settings) and _AdminLog (change log).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
-// Must equal the Security Token in the app's Connection tab (protects the email action).
 const EMAIL_TOKEN = 'ULLSWATER-CORP-SECURE-9021';
-const SCRIPT_VERSION = 3;   // the app checks this number to know your script is up to date
+const SCRIPT_VERSION = 4;
+
+function J_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+function bump_() { PropertiesService.getScriptProperties().setProperty('rev', Date.now() + '-' + Math.floor(Math.random() * 1000)); }
+function rev_() { return PropertiesService.getScriptProperties().getProperty('rev') || '0'; }
+function helper_(name, headers) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(name);
+  if (!sh) { sh = ss.insertSheet(name); sh.getRange(1, 1, 1, headers.length).setValues([headers]); sh.setFrozenRows(1); sh.getRange('C:C').setNumberFormat('@'); }
+  return sh;
+}
+function log_(user, action, target, detail) {
+  const sh = helper_('_AdminLog', ['Time', 'User', 'Action', 'Target', 'Detail']);
+  sh.appendRow([Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'), user || '', action || '', target || '', String(detail || '').slice(0, 2000)]);
+  if (sh.getLastRow() &gt; 3000) sh.deleteRows(2, 1000);
+}
+function saveConfig_(key, value, t, by) {
+  const sh = helper_('_Config', ['Key', 'Part', 'Value', 'UpdatedAt', 'By']);
+  const last = sh.getLastRow();
+  if (last &gt; 1) { const ks = sh.getRange(2, 1, last - 1, 1).getValues(); for (let i = ks.length - 1; i &gt;= 0; i--) if (String(ks[i][0]) === key) sh.deleteRow(i + 2); }
+  const CH = 40000, n = Math.max(1, Math.ceil(value.length / CH)), rows = [];
+  for (let p = 0; p &lt; n; p++) rows.push([key, p, value.substr(p * CH, CH), t, by]);
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, 5).setValues(rows);
+}
+function loadConfig_() {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('_Config'), out = {};
+  if (!sh || sh.getLastRow() &lt; 2) return out;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues().sort(function (a, b) { return a[1] - b[1]; }).forEach(function (r) {
+    const k = String(r[0]); if (!out[k]) out[k] = { v: '', t: Number(r[3]) || 0, by: String(r[4]) };
+    out[k].v += String(r[2]);
+  });
+  return out;
+}
+function loadLog_() {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('_AdminLog');
+  if (!sh || sh.getLastRow() &lt; 2) return [];
+  const n = Math.min(300, sh.getLastRow() - 1);
+  return sh.getRange(sh.getLastRow() - n + 1, 1, n, 5).getValues().reverse().map(function (r) {
+    return { t: fmt_(r[0], 'Timestamp'), user: String(r[1]), action: String(r[2]), target: String(r[3]), detail: String(r[4]) };
+  });
+}
 
 function doPost(e) {
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     const d = JSON.parse(e.postData.contents);
-    // ===== EMAIL: sends the Dashboard &amp; Statement (HTML body + PDF attachment) =====
-    // The app waits for the result via doGet?action=emailresult, so it only says "sent" when Google really sent it.
     if (d.action === 'email') {
       const cache = CacheService.getScriptCache(), key = 'email_' + String(d.id || '');
-      const J = function (o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); };
-      const done = function (o) { try { cache.put(key, JSON.stringify(o), 21600); } catch (ce) {} return J(o); };
+      const done = function (o) { try { cache.put(key, JSON.stringify(o), 21600); } catch (ce) {} return J_(o); };
       if (String(d.token || '') !== EMAIL_TOKEN) return done({ status: 'failed', error: 'Invalid token (Connection tab token does not match EMAIL_TOKEN in the script)' });
       const prev = cache.get(key);
-      if (prev &amp;&amp; JSON.parse(prev).status === 'sent') return J(JSON.parse(prev));   // same request already sent: never duplicate
+      if (prev &amp;&amp; JSON.parse(prev).status === 'sent') return J_(JSON.parse(prev));
       try {
         const opts = { to: String(d.to || ''), subject: String(d.subject || 'Statement of Account'), htmlBody: String(d.html || ''), name: 'Ullswater Fleet Hub' };
         try { opts.attachments = [Utilities.newBlob(String(d.pdfHtml || d.html), 'text/html', 'Statement.html').getAs('application/pdf').setName(String(d.fileName || 'Statement.pdf'))]; } catch (pe) {}
@@ -1175,61 +1210,66 @@ function doPost(e) {
         return done({ status: 'sent', emailed: opts.to, remaining: MailApp.getRemainingDailyQuota() });
       } catch (me) { return done({ status: 'failed', error: String(me) }); }
     }
+    // ===== shared settings (forms, users, statement setup, ...) and admin change log =====
+    if (d.action === 'config') { saveConfig_(String(d.key), String(d.value), Number(d.t) || Date.now(), String(d.by || '')); bump_(); return J_({ ok: true }); }
+    if (d.action === 'adminlog') { log_(d.user, d.logAction, d.target, d.detail); bump_(); return J_({ ok: true }); }
+
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const tab = d.targetTab || d.formName || 'Ledger';
     if (d.action === 'delete') {
       const dsh = ss.getSheetByName(tab);
-      if (dsh && dsh.getLastRow() > 1) {
+      if (dsh &amp;&amp; dsh.getLastRow() &gt; 1) {
         const dh = dsh.getRange(1, 1, 1, dsh.getLastColumn()).getValues()[0].map(String);
         const dc = dh.indexOf('Ticket ID') + 1;
-        if (dc > 0) {
+        if (dc &gt; 0) {
           const dids = dsh.getRange(2, dc, dsh.getLastRow() - 1, 1).getValues();
-          for (let i = dids.length - 1; i >= 0; i--) if (String(dids[i][0]) === String(d.id)) dsh.deleteRow(i + 2);
+          for (let i = dids.length - 1; i &gt;= 0; i--) if (String(dids[i][0]) === String(d.id)) dsh.deleteRow(i + 2);
         }
       }
-      return ContentService.createTextOutput(JSON.stringify({ ok: true, deleted: d.id })).setMimeType(ContentService.MimeType.JSON);
+      bump_();
+      return J_({ ok: true, deleted: d.id });
     }
     const sh = ss.getSheetByName(tab) || ss.insertSheet(tab);
     if (sh.getLastColumn() === 0) sh.getRange(1, 1, 1, FIXED.length).setValues([FIXED]);
-
     let headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
-    const row = {
-      'Ticket ID': d.id, 'Timestamp': d.timestamp, 'Operator': d.user,
-      'Form Name': d.formName, 'Status': d.status || '',
-      'Scanned Ticket': d['Scanned Ticket'] || d.sourceTicket || ''
-    };
+    const row = { 'Ticket ID': d.id, 'Timestamp': d.timestamp, 'Operator': d.user, 'Form Name': d.formName, 'Status': d.status || '',
+      'Scanned Ticket': d['Scanned Ticket'] || d.sourceTicket || '' };
     Object.keys(d.data || {}).forEach(function (k) { if (k !== 'Scanned Ticket') row[k] = d.data[k]; });
-
-    // add any missing column (e.g. "Scanned Ticket" on an existing sheet)
-    Object.keys(row).forEach(function (k) {
-      if (headers.indexOf(k) &lt; 0) { headers.push(k); sh.getRange(1, headers.length).setValue(k); }
-    });
+    Object.keys(row).forEach(function (k) { if (headers.indexOf(k) &lt; 0) { headers.push(k); sh.getRange(1, headers.length).setValue(k); } });
     const values = headers.map(function (h) { return row[h] !== undefined ? row[h] : ''; });
-
     const idCol = headers.indexOf('Ticket ID') + 1;
     let target = 0;
-    if (idCol > 0 &amp;&amp; sh.getLastRow() > 1) {
+    if (idCol &gt; 0 &amp;&amp; sh.getLastRow() &gt; 1) {
       const ids = sh.getRange(2, idCol, sh.getLastRow() - 1, 1).getValues();
       for (let i = 0; i &lt; ids.length; i++) if (String(ids[i][0]) === String(d.id)) { target = i + 2; break; }
     }
-    if (target) sh.getRange(target, 1, 1, values.length).setValues([values]);
-    else sh.appendRow(values);
-
-    return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+    if (target) sh.getRange(target, 1, 1, values.length).setValues([values]); else sh.appendRow(values);
+    bump_();
+    return J_({ ok: true });
   } finally { lock.releaseLock(); }
 }
 
-// STEP 4 - Run this ONCE: pick authorizeEmail in the function list, press Run, then press Review permissions and Allow.
-// It sends a short test email to YOURSELF - that is what makes Google ask for the email permission.
 function authorizeEmail() {
   const me = Session.getEffectiveUser().getEmail();
   MailApp.sendEmail(me, 'Ullswater Fleet Hub - email permission OK', 'Permission granted. Emails left today: ' + MailApp.getRemainingDailyQuota());
   Logger.log('Done. A test email was sent to ' + me + '. Now do step 5 (Deploy).');
 }
 
-// ===== PULL: lets the app mirror everything in the sheet (manual edits, new rows, corrections, deletions) =====
-// Each tab that has a "Ticket ID" column is treated as a ledger tab. A manually typed row with no Ticket ID
-// gets one assigned automatically (and written back to the sheet) so the app can track it.
+// ===== REAL-TIME: run setupRealtime ONCE (Run &gt; allow). It makes every manual edit / row delete in the Google Sheet reach all app users within seconds =====
+function setupRealtime() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'onSheetChange') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('onSheetChange').forSpreadsheet(ss).onChange().create();
+  bump_(); helper_('_Config', ['Key', 'Part', 'Value', 'UpdatedAt', 'By']); helper_('_AdminLog', ['Time', 'User', 'Action', 'Target', 'Detail']);
+  Logger.log('Realtime trigger installed.');
+}
+function onEdit(e) {                       // simple trigger: manual typing in the sheet
+  try { const n = e.range.getSheet().getName(); if (n.charAt(0) === '_') return; bump_(); log_('google-sheet', 'Sheet edit', n, e.range.getA1Notation()); } catch (x) {}
+}
+function onSheetChange(e) {                // installable trigger: row/column insert, delete, paste, etc.
+  try { bump_(); if (e &amp;&amp; e.changeType &amp;&amp; e.changeType !== 'EDIT') log_('google-sheet', 'Sheet ' + e.changeType, '', ''); } catch (x) {}
+}
+
 function fmt_(v, h) {
   if (v instanceof Date) {
     const tz = Session.getScriptTimeZone();
@@ -1241,21 +1281,21 @@ function fmt_(v, h) {
 
 function doGet(e) {
   const p = (e &amp;&amp; e.parameter) || {};
-  const J = function (o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); };
-  if (p.action === 'emailresult') {          // result of an email request sent by the app
+  if (p.action === 'ping') return J_({ ok: true, rev: rev_(), version: SCRIPT_VERSION });   // tiny + fast: the app asks every few seconds
+  if (p.action === 'emailresult') {
     const raw = CacheService.getScriptCache().get('email_' + String(p.id || ''));
     const r = raw ? JSON.parse(raw) : { status: 'pending' };
-    return J({ ok: true, emailStatus: r.status, error: r.error || '' });
+    return J_({ ok: true, emailStatus: r.status, error: r.error || '' });
   }
-  if (p.action === 'emailcheck') {           // setup test used by the app
+  if (p.action === 'emailcheck') {
     const tokenOk = String(p.token || '') === EMAIL_TOKEN, out = { ok: true, emailSupport: true, version: SCRIPT_VERSION, tokenOk: tokenOk };
     try { out.quota = MailApp.getRemainingDailyQuota(); out.authorized = true; if (tokenOk) out.sender = Session.getEffectiveUser().getEmail(); }
     catch (ae) { out.authorized = false; out.error = String(ae); }
-    return J(out);
+    return J_(out);
   }
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
-    const out = { ok: true, tabs: {}, rows: [], fetchedAt: new Date().toISOString() };
+    const out = { ok: true, tabs: {}, rows: [], fetchedAt: new Date().toISOString(), rev: rev_(), config: loadConfig_(), adminLog: loadLog_() };
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const SKIP = { 'Ticket ID': 1, 'Timestamp': 1, 'Operator': 1, 'Form Name': 1, 'Status': 1, 'Scanned Ticket': 1 };
     ss.getSheets().forEach(function (sh) {
@@ -1264,7 +1304,7 @@ function doGet(e) {
       const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
       const headers = vals[0].map(String);
       const iId = headers.indexOf('Ticket ID');
-      if (iId &lt; 0) return;                       // not a ledger tab
+      if (iId &lt; 0) return;
       const iTs = headers.indexOf('Timestamp'), iOp = headers.indexOf('Operator');
       const iSt = headers.indexOf('Status'), iSc = headers.indexOf('Scanned Ticket');
       const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
@@ -1273,7 +1313,7 @@ function doGet(e) {
         const row = vals[r];
         let hasData = false;
         for (let c = 0; c &lt; row.length; c++) { if (c !== iId &amp;&amp; String(row[c]).trim() !== '') { hasData = true; break; } }
-        if (!hasData) continue;                  // skip blank rows
+        if (!hasData) continue;
         let id = String(row[iId]).trim();
         if (!id) { id = 'SHT-' + Utilities.getUuid().substring(0, 8).toUpperCase(); sh.getRange(r + 1, iId + 1).setValue(id); }
         let ts = iTs &gt;= 0 ? fmt_(row[iTs], 'Timestamp') : '';
@@ -1282,16 +1322,13 @@ function doGet(e) {
         headers.forEach(function (h, c) { if (h &amp;&amp; !SKIP[h]) data[h] = fmt_(row[c], h); });
         const scan = iSc &gt;= 0 ? fmt_(row[iSc], '') : '';
         if (scan) data['Scanned Ticket'] = scan;
-        out.rows.push({
-          id: id, timestamp: ts, user: (iOp &gt;= 0 ? fmt_(row[iOp], '') : '') || 'sheet', formName: tab,
-          status: (iSt &gt;= 0 &amp;&amp; fmt_(row[iSt], '').toUpperCase() === 'VOID') ? 'VOID' : 'VALID',
-          sourceTicket: scan, data: data
-        });
+        out.rows.push({ id: id, timestamp: ts, user: (iOp &gt;= 0 ? fmt_(row[iOp], '') : '') || 'sheet', formName: tab,
+          status: (iSt &gt;= 0 &amp;&amp; fmt_(row[iSt], '').toUpperCase() === 'VOID') ? 'VOID' : 'VALID', sourceTicket: scan, data: data });
         count++;
       }
       out.tabs[tab] = count;
     });
-    return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+    return J_(out);
   } finally { lock.releaseLock(); }
 }
 </textarea>
@@ -2821,6 +2858,7 @@ function doGet(e) {
                 const url = s.webappId + (s.webappId.includes('?') ? '&' : '?') + 'action=pull&_=' + Date.now();
                 const res = await fetch(url, { cache: 'no-store' });
                 const j = await res.json();
+                if (j && j.ok && window.rtApplyRemote) window.rtApplyRemote(j);
                 if (!j || !j.ok || !Array.isArray(j.rows)) throw new Error('Endpoint did not return sheet data — re-deploy the updated Apps Script as a new version');
                 const st = mergeSheetRows(j.rows, j.tabs || {});
                 if (st.added || st.updated || st.removed) {
@@ -3229,24 +3267,24 @@ function doGet(e) {
 
         function getLogDate(log) {
             const form = forms.find(f => f.id === log.formId);
-            const mapped = stmtCfg && stmtCfg.dateField;
+            const mapped = stmtCfg && M(log).dateField;
             const df = mapped ? { label: mapped } : (form && (form.fields || []).find(f => f.type === 'date'));
             const v = df && log.data ? String(log.data[df.label] || '') : '';
             if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
             return String(log.timestamp || '').slice(0, 10);
         }
         const getLogAmount = log => {
-            const d = log.data || {}; let v = d[stmtCfg.amountField];
+            const d = log.data || {}; let v = d[M(log).amountField];
             if (v === undefined) { const f = forms.find(x => x.id === log.formId); const nf = f ? (f.fields || []).filter(fl => ['computation', 'numbers'].includes(fl.type)) : []; let alt = null; for (const re of [/^total amount$/i, /^amount$/i, /amount/i, /total/i]) { alt = nf.find(fl => re.test(fl.label)); if (alt) break; } if (alt) v = d[alt.label]; }   // other sheet: use its own amount column
             const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n;
         };
         // Income / expense: the Type column pre-sets Add (Revenue) or Deduct (Cost); each row can still be changed by hand
         const getLogKind = log => {
-            if (!stmtCfg || !stmtCfg.typeField) return 'income';
-            const raw = String((log.data || {})[stmtCfg.typeField] == null ? '' : (log.data || {})[stmtCfg.typeField]).trim().toLowerCase();
+            if (!stmtCfg || !M(log).typeField) return 'income';
+            const raw = String((log.data || {})[M(log).typeField] == null ? '' : (log.data || {})[M(log).typeField]).trim().toLowerCase();
             if (!raw) return 'other';
             const words = x => String(x || '').toLowerCase().split(',').map(w => w.trim()).filter(Boolean);
-            const inc = words(stmtCfg.incomeWords), cost = words(stmtCfg.costWords);
+            const inc = words(M(log).incomeWords), cost = words(M(log).costWords);
             if (inc.includes(raw)) return 'income'; if (cost.includes(raw)) return 'cost';
             if (inc.some(w => raw.includes(w))) return 'income'; if (cost.some(w => raw.includes(w))) return 'cost';
             return 'other';
@@ -3265,7 +3303,7 @@ function doGet(e) {
             saveStmtCfg(); renderStatement();
         }
         const getLogUnit = log => {
-            let v = log.data ? log.data[stmtCfg.unitField] : '';
+            let v = log.data ? log.data[M(log).unitField] : '';
             if (v === undefined && log.data && log.data.Cashier !== undefined && (forms.find(f => f.id === log.formId) || {}).pos) v = log.data.Cashier;   // POS sales group by cashier
             return String(v == null ? '' : v).trim() || '(Unassigned)';
         };
@@ -3551,15 +3589,15 @@ ${A.add ? `<tr class="bg-slate-800/40"><td class="p-2.5 font-semibold text-slate
             // al: l = left, c = centre, r = right. Widths are %, the description column takes the remainder.
             const cols = [];
             cols.push({ h: c.dateField || 'Date', w: 11, al: 'c', cell: l => fmtDate(getLogDate(l)) });
-            if (c.refField) cols.push({ h: c.refField, w: 15, al: 'l', cell: l => `<span class="strong">${escH((l.data || {})[c.refField] || '')}</span><div class="sub">${escH(l.id)}</div>` });
+            if (c.refField) cols.push({ h: c.refField, w: 15, al: 'l', cell: l => `<span class="strong">${escH((l.data || {})[M(l).refField] || '')}</span><div class="sub">${escH(l.id)}</div>` });
             if (descF.length || subF.length) cols.push({ h: descF.join(' / ') || subF.join(' → '), w: 0, al: 'l', cell: l => {
                 const d = l.data || {};
-                const main = descF.map(k => d[k]).filter(v => v != null && v !== '').join(' – ');
-                const sub = subF.map(k => d[k]).filter(v => v != null && v !== '').join(' → ');
+                const main = (M(l).desc || []).filter(Boolean).map(k => d[k]).filter(v => v != null && v !== '').join(' – ');
+                const sub = (M(l).sub || []).filter(Boolean).map(k => d[k]).filter(v => v != null && v !== '').join(' → ');
                 return `${escH(main)}${sub ? `<div class="sub">${escH(sub)}</div>` : ''}`;
             } });
-            if (c.qtyField) cols.push({ h: c.qtyField, w: 9, al: 'r', cell: l => escH((l.data || {})[c.qtyField] || '') });
-            if (c.rateField) cols.push({ h: c.rateField, w: 11, al: 'r', cell: l => numOrRaw((l.data || {})[c.rateField]) });
+            if (c.qtyField) cols.push({ h: c.qtyField, w: 9, al: 'r', cell: l => escH((l.data || {})[M(l).qtyField] || '') });
+            if (c.rateField) cols.push({ h: c.rateField, w: 11, al: 'r', cell: l => numOrRaw((l.data || {})[M(l).rateField]) });
             cols.push({ h: 'Add / Deduct', w: forPrint ? 11 : 16, al: 'c', cell: l => {
                 const m = getLogMode(l);
                 if (forPrint) return m === 'ded' ? '<span style="color:#b91c1c;font-weight:700">Deduction</span>' : '<span style="color:#047857;font-weight:700">Additional</span>';
@@ -5039,6 +5077,212 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
             container.appendChild(toast);
             setTimeout(() => toast.remove(), 3500);
         }
+
+        // =====================================================================
+        // REAL-TIME SYNC LAYER (v4): Google Sheet <-> every user, shared settings, admin change log
+        // =====================================================================
+        (function () {
+            const SYNC = { ullswater_forms: 'Form Designer', ullswater_users: 'Users', ullswater_stmt_cfg: 'Dashboard / Statement Setup', ullswater_geofences: 'SatNav Geofences', ullswater_chat_messages: 'Messenger' };
+            const PING_MS = 3000, HOLD_MS = 5000;
+            const meta = (() => { try { return JSON.parse(localStorage.getItem('ullswater_sync_meta')) || {}; } catch (e) { return {}; } })();
+            const snap = {}; const timers = {}; let applying = false, lastRev = '', pinging = false, adminLog = [];
+            try { adminLog = JSON.parse(localStorage.getItem('ullswater_admin_log')) || []; } catch (e) {}
+            const base = () => { try { const s = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {}; return s.webappId && String(s.webappId).startsWith('http') ? s.webappId : ''; } catch (e) { return ''; } };
+            const post = obj => { const u = base(); if (!u) return; try { fetch(u, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) }); } catch (e) {} };
+            const rawSet = Storage.prototype.setItem;
+            const saveMeta = () => rawSet.call(localStorage, 'ullswater_sync_meta', JSON.stringify(meta));
+            const jp = s => { try { return JSON.parse(s); } catch (e) { return null; } };
+
+            // ---------- admin change log ----------
+            function renderAdminLog() {
+                const body = document.getElementById('rt-log-body'); if (!body) return;
+                body.innerHTML = adminLog.length ? adminLog.slice(0, 200).map(l => `<tr class="hover:bg-slate-800/40"><td class="p-2.5 text-slate-400 whitespace-nowrap">${escH(l.t)}</td><td class="p-2.5 text-blue-300">${escH(l.user)}</td><td class="p-2.5 text-emerald-300">${escH(l.action)}</td><td class="p-2.5 text-slate-200">${escH(l.target)}</td><td class="p-2.5 text-slate-400 font-sans">${escH(l.detail)}</td></tr>`).join('')
+                    : '<tr><td colspan="5" class="p-5 text-center text-slate-500">No changes logged yet.</td></tr>';
+            }
+            function logAdmin(action, target, detail) {
+                const e = { t: getLocalTimestamp(), user: activeUser || 'unknown', action, target: target || '', detail: detail || '' };
+                adminLog.unshift(e); adminLog = adminLog.slice(0, 300);
+                rawSet.call(localStorage, 'ullswater_admin_log', JSON.stringify(adminLog)); renderAdminLog();
+                post({ action: 'adminlog', user: e.user, logAction: action, target: e.target, detail: e.detail });
+            }
+            function mountLogPanel() {
+                const host = document.getElementById('user-transmission-summary-cards'); if (!host || document.getElementById('rt-log-panel')) return;
+                const d = document.createElement('div'); d.id = 'rt-log-panel'; d.className = 'bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm';
+                d.innerHTML = `<div class="p-4 border-b border-slate-800 flex justify-between items-center gap-2 flex-wrap"><h4 class="font-bold text-sm text-white"><i class="fa-solid fa-clock-rotate-left text-emerald-400 mr-1.5"></i>Live Change Log <span class="text-[10px] font-normal text-slate-400">(software, data entry &amp; Google Sheet changes · stored in the sheet tab “_AdminLog”)</span></h4><button onclick="pullFromSheet(false)" class="bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] font-semibold px-3 py-1.5 rounded-lg border border-slate-700"><i class="fa-solid fa-rotate"></i> Refresh</button></div><div class="overflow-x-auto max-h-96 overflow-y-auto"><table class="w-full text-left text-[11px] text-slate-300"><thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold sticky top-0"><tr><th class="p-2.5">Time</th><th class="p-2.5">User</th><th class="p-2.5">Action</th><th class="p-2.5">Where</th><th class="p-2.5">Detail</th></tr></thead><tbody id="rt-log-body" class="divide-y divide-slate-800/60 font-mono"></tbody></table></div>`;
+                host.parentElement.appendChild(d); renderAdminLog();
+            }
+
+            // ---------- describe what changed ----------
+            function describe(key, oldS, newS) {
+                const o = jp(oldS), n = jp(newS);
+                if (key === 'ullswater_forms' && Array.isArray(o) && Array.isArray(n)) {
+                    const out = [];
+                    n.forEach(f => { const p = o.find(x => x.id === f.id); if (!p) { out.push(`sheet added: ${f.name}`); return; }
+                        if (p.name !== f.name) out.push(`sheet renamed ${p.name} → ${f.name}`);
+                        const pl = (p.fields || []).map(x => x.label), nl = (f.fields || []).map(x => x.label);
+                        nl.filter(x => !pl.includes(x)).forEach(x => out.push(`${f.name}: field added “${x}”`));
+                        pl.filter(x => !nl.includes(x)).forEach(x => out.push(`${f.name}: field removed “${x}”`));
+                        if (!out.some(s => s.startsWith(f.name + ':')) && JSON.stringify(p.fields) !== JSON.stringify(f.fields)) out.push(`${f.name}: field settings edited`); });
+                    o.filter(f => !n.some(x => x.id === f.id)).forEach(f => out.push(`sheet removed: ${f.name}`));
+                    return out.join('; ') || 'form settings edited';
+                }
+                if (key === 'ullswater_users' && Array.isArray(o) && Array.isArray(n)) {
+                    const out = []; n.filter(u => !o.some(x => x.username === u.username)).forEach(u => out.push(`user added: ${u.username}`));
+                    o.filter(u => !n.some(x => x.username === u.username)).forEach(u => out.push(`user removed: ${u.username}`));
+                    n.forEach(u => { const p = o.find(x => x.username === u.username); if (p && JSON.stringify(p) !== JSON.stringify(u)) out.push(`user edited: ${u.username}`); });
+                    return out.join('; ') || 'users edited';
+                }
+                if (key === 'ullswater_stmt_cfg' && o && n) {
+                    const ch = Object.keys(Object.assign({}, o, n)).filter(k => !['sheetIds', 'sheetId'].includes(k) && JSON.stringify(o[k]) !== JSON.stringify(n[k]));
+                    return ch.length ? 'changed: ' + ch.slice(0, 8).join(', ') : 'setup updated';
+                }
+                return 'updated';
+            }
+
+            // ---------- push local changes ----------
+            const payload = k => { let v = localStorage.getItem(k); if (k === 'ullswater_stmt_cfg') { const o = jp(v) || {}; delete o.sheetIds; delete o.sheetId; v = JSON.stringify(o); }
+                if (k === 'ullswater_chat_messages') { const a = jp(v) || []; v = JSON.stringify(a.slice(-200)); } return v; };
+            function pushKey(k, silentLog) {
+                const v = payload(k); if (v == null) return;
+                const t = meta[k] = Date.now(); saveMeta();
+                post({ action: 'config', key: k, value: v, t, by: activeUser || '' });
+                if (!silentLog && k !== 'ullswater_chat_messages') logAdmin(SYNC[k] + ' changed', SYNC[k], describe(k, snap[k], v));
+                snap[k] = v;
+            }
+            Storage.prototype.setItem = function (k, v) {
+                rawSet.call(this, k, v);
+                if (this === localStorage && SYNC[k] && !applying) { meta[k] = Date.now(); saveMeta(); clearTimeout(timers[k]); timers[k] = setTimeout(() => { delete timers[k]; pushKey(k); setTimeout(() => ping(true), 800); }, 500); }
+            };
+            Object.keys(SYNC).forEach(k => { snap[k] = payload(k); });
+
+            // ---------- apply remote changes ----------
+            function applyKey(k, v) {
+                const keepFields = {};
+                document.querySelectorAll('#dynamic-entry-form [id^="field_"]').forEach(el => { if (el.value !== '') keepFields[el.id] = el.value; });
+                applying = true; try {
+                    if (k === 'ullswater_stmt_cfg') { const r = jp(v) || {}; const cur = jp(localStorage.getItem(k)) || {}; r.sheetIds = cur.sheetIds || (stmtCfg && stmtCfg.sheetIds) || []; r.sheetId = cur.sheetId || '__ALL__'; v = JSON.stringify(r); }
+                    localStorage.setItem(k, v);
+                } finally { applying = false; }
+                snap[k] = v;
+                if (k === 'ullswater_forms') {
+                    forms = jp(v) || forms;
+                    if (!forms.some(f => f.id === activeFormId) && forms[0]) activeFormId = forms[0].id;
+                    renderFormSelector(); renderActiveFormFields();
+                    Object.keys(keepFields).forEach(id => { const el = document.getElementById(id); if (el && el.value === '' && el.type !== 'file') { el.value = keepFields[id]; el.dispatchEvent(new Event('input', { bubbles: true })); } });
+                    renderDesignerFormList(); if (document.getElementById('tab-designer').classList.contains('hidden')) renderFormEditorWorkspace();
+                    fillSheetSelects(); if (stmtReady) initStatementTab(); renderLedgerTable(); renderTransmissionsOverview();
+                } else if (k === 'ullswater_users') {
+                    users = jp(v) || users; const me = users.find(u => u.username === activeUser);
+                    if (activeUser && !me) { showToast('Your account was removed by the administrator', 'error'); logoutUser(); return; }
+                    if (me && me.role !== activeUserRole) { activeUserRole = me.role; rawSet.call(localStorage, 'ullswater_active_role', activeUserRole); }
+                    renderUsersTable(); renderMessengerUsersList(); applyRolePermissions(); renderFormSelector(); renderActiveFormFields(); renderLedgerTable();
+                } else if (k === 'ullswater_stmt_cfg') {
+                    loadStmtCfg();
+                    const set = (id, val) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = val || ''; };
+                    set('stmt-billed-to', stmtCfg.billedTo); set('stmt-project', stmtCfg.project); set('stmt-remarks', stmtCfg.remarks);
+                    set('stmt-rev-name', stmtCfg.revName); set('stmt-rev-role', stmtCfg.revRole); set('stmt-app-name', stmtCfg.appName); set('stmt-app-role', stmtCfg.appRole); set('stmt-ver-name', stmtCfg.verName); set('stmt-ver-role', stmtCfg.verRole);
+                    if (stmtReady) initStatementTab(); renderLedgerTable();
+                } else if (k === 'ullswater_geofences') { geofences = jp(v) || geofences;
+                } else if (k === 'ullswater_chat_messages') { chatMessages = jp(v) || chatMessages; renderChatMessages(); }
+            }
+            window.rtApplyRemote = function (j) {
+                if (!j) return;
+                if (j.rev) lastRev = j.rev;
+                if (Array.isArray(j.adminLog)) { adminLog = j.adminLog; rawSet.call(localStorage, 'ullswater_admin_log', JSON.stringify(adminLog)); renderAdminLog(); }
+                const cfg = j.config || {}, now = Date.now(); let n = 0;
+                Object.keys(SYNC).forEach(k => {
+                    const r = cfg[k]; if (!r || !r.v) return;
+                    if (timers[k] || now - (meta[k] || 0) < HOLD_MS && (meta[k] || 0) >= r.t) return;   // my newer edit is still on its way
+                    if (r.t <= (meta[k] || 0) && localStorage.getItem(k) != null) return;
+                    if (payload(k) === r.v) { meta[k] = r.t; return; }
+                    try { applyKey(k, r.v); meta[k] = r.t; n++; } catch (e) { console.warn('sync apply failed', k, e); }
+                });
+                saveMeta();
+                if (n) showToast(`Updated live from the sheet: ${n} shared setting(s)`, 'success');
+            };
+
+            // ---------- fast change detection (ping every few seconds) ----------
+            async function ping(force) {
+                const u = base(); if (!u || pinging || !activeUser || (document.hidden && !force)) return; pinging = true;
+                try {
+                    const r = await fetch(u + (u.includes('?') ? '&' : '?') + 'action=ping&_=' + Date.now(), { cache: 'no-store' });
+                    const j = await r.json();
+                    if (j && j.ok && j.rev !== lastRev) { pinging = false; await pullFromSheet(true); }
+                } catch (e) {} finally { pinging = false; }
+            }
+            setInterval(() => ping(false), PING_MS);
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(true); });
+            window.addEventListener('online', () => ping(true));
+
+            // ---------- admin log for ledger events ----------
+            const _post = postLogToGoogleSheet;
+            postLogToGoogleSheet = function (l, tab) {
+                const isNew = !l.sheetSynced && !l._rtLogged, edited = l._dirtyAt && Date.now() - l._dirtyAt < 5000;
+                if (isNew || edited) { l._rtLogged = true; logAdmin(isNew && !edited ? 'Entry added' : (l.status === 'VOID' ? 'Entry voided' : 'Entry edited'), l.formName, `${l.id} by ${l.user}`); }
+                return _post(l, tab);
+            };
+            const _del = postDeleteToGoogleSheet;
+            postDeleteToGoogleSheet = function (l) { logAdmin('Entry deleted', l.formName, l.id); return _del(l); };
+
+            // ---------- "Sync Sheets" button: push EVERYTHING, then pull EVERYTHING immediately ----------
+            syncToCloudEndpoint = function () {
+                if (!base()) { showToast('Configure Web App URL in Connection tab first', 'error'); return; }
+                logs.forEach(l => { l.sheetSynced = l.sheetSynced; _post(l, l.formName); });
+                Object.keys(SYNC).forEach(k => pushKey(k, true));
+                logAdmin('Manual sync', 'All sheets & settings', `${logs.length} entries + shared settings pushed`);
+                showToast('Pushed all entries & settings — pulling sheet changes…', 'success');
+                setTimeout(() => pullFromSheet(false), 2500);
+            };
+
+            // ---------- each Data Entry Sheet gets its own statement field mapping ----------
+            const MAPK = ['unitField', 'amountField', 'typeField', 'dateField', 'refField', 'qtyField', 'rateField', 'desc', 'sub', 'incomeWords', 'costWords'];
+            window.M = log => { const m = stmtCfg && stmtCfg.maps && log && stmtCfg.maps[log.formId]; return m ? Object.assign({}, stmtCfg, m) : (stmtCfg || {}); };
+            let mapSheet = '';
+            window.rtMapSheetChange = id => { mapSheet = id; initStatementTab(); };
+            function mapBar() {
+                const sel = document.getElementById('stmt-map-sheet'); const ids = getSheetIds().filter(i => forms.some(f => f.id === i));
+                const host = document.getElementById('stmt-map-bar'); if (!host) return;
+                if (mapSheet && !ids.includes(mapSheet)) mapSheet = '';
+                host.classList.toggle('hidden', ids.length < 2);
+                if (ids.length < 2) { mapSheet = ''; return; }
+                host.querySelector('select').innerHTML = `<option value="">All selected sheets (shared default)</option>` + ids.map(i => `<option value="${escH(i)}" ${i === mapSheet ? 'selected' : ''}>Only: ${escH((forms.find(f => f.id === i) || {}).name)}</option>`).join('');
+            }
+            function fillForSheet() {
+                if (!mapSheet) return; const f = forms.find(x => x.id === mapSheet); if (!f) return;
+                const fields = f.fields || [], m = Object.assign({}, stmtCfg, (stmtCfg.maps || {})[mapSheet] || {});
+                const fill = (id, list, sel, opt) => { const el = document.getElementById(id); if (el) el.innerHTML = (opt ? '<option value="">— None —</option>' : '') + list.map(x => `<option value="${escH(x.label)}" ${x.label === sel ? 'selected' : ''}>${escH(x.label)}</option>`).join(''); };
+                const num = ['computation', 'numbers', 'number'];
+                fill('stmt-unit-field', fields, m.unitField); fill('stmt-amount-field', fields.filter(x => num.includes(x.type)), m.amountField);
+                fill('stmt-date-field', fields.filter(x => x.type === 'date'), m.dateField, 1); fill('stmt-ref-field', fields, m.refField, 1);
+                fill('stmt-qty-field', fields, m.qtyField, 1); fill('stmt-rate-field', fields, m.rateField, 1);
+                [1, 2, 3].forEach(i => fill('stmt-desc' + i + '-field', fields, (m.desc || [])[i - 1], 1)); [1, 2].forEach(i => fill('stmt-sub' + i + '-field', fields, (m.sub || [])[i - 1], 1));
+                fill('stmt-type-field', fields.filter(x => !num.includes(x.type)), m.typeField, 1);
+                const w = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; }; w('stmt-income-words', m.incomeWords); w('stmt-cost-words', m.costWords);
+            }
+            const _init = initStatementTab;
+            initStatementTab = function () { _init(); mapBar(); fillForSheet(); };
+            const _chg = onStmtFieldChange;
+            onStmtFieldChange = function () {
+                if (!mapSheet) { _chg(); return; }
+                const save = {}; MAPK.forEach(k => { save[k] = stmtCfg[k]; });
+                _chg(); stmtCfg.maps = stmtCfg.maps || {}; const m = {}; MAPK.forEach(k => { m[k] = stmtCfg[k]; stmtCfg[k] = save[k]; });
+                stmtCfg.maps[mapSheet] = m; saveStmtCfg(); renderStatement();
+            };
+            const _reset = resetStmtMapping;
+            resetStmtMapping = function () { if (mapSheet && stmtCfg.maps) { delete stmtCfg.maps[mapSheet]; saveStmtCfg(); initStatementTab(); } else { if (stmtCfg) delete stmtCfg.maps; _reset(); } };
+            function mountMapBar() {
+                const first = document.getElementById('stmt-unit-field'); if (!first || document.getElementById('stmt-map-bar')) return;
+                const d = document.createElement('div'); d.id = 'stmt-map-bar'; d.className = 'hidden bg-blue-950/40 border border-blue-800/60 rounded-lg p-2.5';
+                d.innerHTML = `<label class="block text-[10px] font-bold text-blue-300 uppercase mb-1">Configure fields for</label><select onchange="rtMapSheetChange(this.value)" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select><p class="text-[10px] text-slate-400 mt-1">Pick a single sheet to give it its own columns, income / cost words and report layout. The statement uses each sheet’s own mapping. Shared with all users.</p>`;
+                first.closest('.space-y-2').prepend(d);
+            }
+
+            // ---------- boot ----------
+            const boot = () => { mountLogPanel(); mountMapBar(); };
+            if (document.readyState === 'complete') boot(); else window.addEventListener('load', () => setTimeout(boot, 50));
+            const _sw = switchTab; switchTab = function (t) { _sw.apply(this, arguments); if (t === 'transmissions') { mountLogPanel(); renderAdminLog(); } };
+            setTimeout(() => ping(true), 1200);
+        })();
     </script>
 </body>
 </html>
