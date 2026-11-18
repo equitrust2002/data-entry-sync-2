@@ -1151,7 +1151,7 @@
 // Ledger tabs: one tab per Data Entry Sheet. Hidden helper tabs: _Config (shared settings) and _AdminLog (change log).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
 const EMAIL_TOKEN = 'ULLSWATER-CORP-SECURE-9021';
-const SCRIPT_VERSION = 4;
+const SCRIPT_VERSION = 5;
 
 function J_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 function bump_() { PropertiesService.getScriptProperties().setProperty('rev', Date.now() + '-' + Math.floor(Math.random() * 1000)); }
@@ -1295,7 +1295,7 @@ function doGet(e) {
   }
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
-    const out = { ok: true, tabs: {}, rows: [], fetchedAt: new Date().toISOString(), rev: rev_(), config: loadConfig_(), adminLog: loadLog_() };
+    const out = { ok: true, tabs: {}, tabHeaders: {}, rawTabs: {}, rows: [], fetchedAt: new Date().toISOString(), rev: rev_(), config: loadConfig_(), adminLog: loadLog_() };
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const SKIP = { 'Ticket ID': 1, 'Timestamp': 1, 'Operator': 1, 'Form Name': 1, 'Status': 1, 'Scanned Ticket': 1 };
     ss.getSheets().forEach(function (sh) {
@@ -1304,7 +1304,23 @@ function doGet(e) {
       const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
       const headers = vals[0].map(String);
       const iId = headers.indexOf('Ticket ID');
-      if (iId &lt; 0) return;
+      if (tab.charAt(0) === '_') return;           // hidden helper tabs
+      if (iId &lt; 0) {                               // plain Google tab (not a Data Entry sheet yet): read-only, nothing is written to it
+        const seen = {}, hd = headers.map(function (h, c) { let n = String(h).trim() || ('Column ' + (c + 1)); if (seen[n]) { seen[n]++; n = n + ' (' + seen[n] + ')'; } else seen[n] = 1; return n; });
+        out.tabHeaders[tab] = hd; out.rawTabs[tab] = 1;
+        const slug = tab.replace(/[^A-Za-z0-9]+/g, '_');
+        let rc = 0;
+        for (let r = 1; r &lt; vals.length &amp;&amp; rc &lt; 20000; r++) {
+          const rw = vals[r]; let any = false;
+          for (let c = 0; c &lt; rw.length; c++) { if (String(rw[c]).trim() !== '') { any = true; break; } }
+          if (!any) continue;
+          const dd = {}; hd.forEach(function (h, c) { dd[h] = fmt_(rw[c], h); });
+          out.rows.push({ id: 'RAW-' + slug + '-' + (r + 1), timestamp: '', user: 'google-sheet', formName: tab, status: 'VALID', sourceTicket: '', data: dd, raw: true });
+          rc++;
+        }
+        out.tabs[tab] = rc; return;
+      }
+      out.tabHeaders[tab] = headers.filter(function (h) { return h &amp;&amp; !SKIP[h]; });
       const iTs = headers.indexOf('Timestamp'), iOp = headers.indexOf('Operator');
       const iSt = headers.indexOf('Status'), iSc = headers.indexOf('Scanned Ticket');
       const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
@@ -1591,9 +1607,15 @@ function doGet(e) {
                 <button onclick="closeDropdownOptionsModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="p-6 space-y-4">
-                <div class="flex gap-2">
-                    <input type="text" id="new-dropdown-item-input" placeholder="Add new option item..." class="flex-1 bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5">
-                    <button onclick="addDropdownOptionItem()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl text-xs font-semibold">Add</button>
+                <div class="space-y-2">
+                    <div class="flex gap-2 items-start">
+                        <textarea id="new-dropdown-item-input" rows="3" placeholder="Type or paste items, separated by comma (or new line)&#10;e.g. Cash, Card, GCash, Other" onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();addDropdownOptionItem();}" class="flex-1 bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5 resize-y"></textarea>
+                        <button onclick="addDropdownOptionItem()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl text-xs font-semibold">Add</button>
+                    </div>
+                    <div class="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Paste a whole list at once: comma, semicolon or new line separates items. Duplicates are skipped.</span>
+                        <button onclick="clearDropdownOptionItems()" class="text-rose-400 hover:text-rose-300 font-semibold whitespace-nowrap ml-2">Clear all</button>
+                    </div>
                 </div>
                 <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 max-h-52 overflow-y-auto space-y-2" id="modal-dropdown-items-container"></div>
             </div>
@@ -2464,7 +2486,7 @@ function doGet(e) {
         // Form Builder & Field Rendering
         function renderFormSelector() {
             const select = document.getElementById('entry-form-select');
-            select.innerHTML = forms.filter(f => !f.pos).map(f => `<option value="${f.id}" ${f.id === activeFormId ? 'selected' : ''}>${f.name}</option>`).join('');
+            select.innerHTML = forms.filter(f => !f.pos && !f.gsTab).map(f => `<option value="${f.id}" ${f.id === activeFormId ? 'selected' : ''}>${f.name}</option>`).join('');
         }
 
         function onActiveFormChange(formId) { activeFormId = formId; renderActiveFormFields(); }
@@ -2760,6 +2782,7 @@ function doGet(e) {
         }
 
         function postLogToGoogleSheet(logEntry, sheetTabName) {
+            if (logEntry && logEntry.raw) return;   // plain Google tabs are read-only
             const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
             if(settings.webappId && settings.webappId.startsWith('http')) {
                 fetch(settings.webappId, {
@@ -2812,7 +2835,7 @@ function doGet(e) {
                 const form = forms.find(f => f.name.toLowerCase() === String(r.formName).toLowerCase());
                 const local = logs.find(l => l.id === r.id);
                 if (!local) {
-                    logs.push({ id: r.id, timestamp: r.timestamp, user: r.user, formName: form ? form.name : r.formName, formId: form ? form.id : '',
+                    logs.push({ id: r.id, timestamp: r.timestamp || (r.raw ? getLocalTimestamp() : ''), raw: !!r.raw, user: r.user, formName: form ? form.name : r.formName, formId: form ? form.id : '',
                         data: r.data || {}, status: r.status, sourceTicket: r.sourceTicket || '', sheetSynced: true });
                     st.added++;
                     return;
@@ -2820,7 +2843,7 @@ function doGet(e) {
                 local.sheetSynced = true;
                 if (local._dirtyAt && now - local._dirtyAt < 20000) return;   // local edit still being pushed
                 let changed = false;
-                if (!sheetEq(local.timestamp, r.timestamp)) { local.timestamp = r.timestamp; changed = true; }
+                if (!r.raw && !sheetEq(local.timestamp, r.timestamp)) { local.timestamp = r.timestamp; changed = true; }
                 if (!sheetEq(local.user, r.user) && r.user !== 'sheet') { local.user = r.user; changed = true; }
                 if (local.status !== r.status) { local.status = r.status; changed = true; }
                 if (!sheetEq(local.sourceTicket || '', r.sourceTicket || '')) { local.sourceTicket = r.sourceTicket || ''; changed = true; }
@@ -2860,7 +2883,10 @@ function doGet(e) {
                 const j = await res.json();
                 if (j && j.ok && window.rtApplyRemote) window.rtApplyRemote(j);
                 if (!j || !j.ok || !Array.isArray(j.rows)) throw new Error('Endpoint did not return sheet data — re-deploy the updated Apps Script as a new version');
+                if (!j.tabHeaders && !window._gsHint) { window._gsHint = 1; showToast('Update the Google Apps Script (v5) in the Connection tab to load ALL Google tabs', 'error'); }
+                const gsChanged = window.gsEnsureTabForms ? window.gsEnsureTabForms(j) : false;
                 const st = mergeSheetRows(j.rows, j.tabs || {});
+                if (gsChanged) { try { fillSheetSelects(); if (stmtReady) initStatementTab(); renderLedgerTable(); } catch (e) {} }
                 if (st.added || st.updated || st.removed) {
                     logs.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
                     localStorage.setItem('ullswater_logs', JSON.stringify(logs));
@@ -2956,9 +2982,9 @@ function doGet(e) {
                         : '<span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full text-[10px]">VALID</span>'}</td>
                     <td class="p-3.5 text-right space-x-1 whitespace-nowrap">
                         <button onclick="openTicketModal('${log.id}')" title="View ticket" class="bg-slate-800 text-blue-300 px-2 py-1 rounded text-xs"><i class="fa-solid fa-ticket"></i></button>
-                        <button onclick="openEditModal('${log.id}')" title="Edit" class="bg-slate-800 text-amber-300 px-2 py-1 rounded text-xs"><i class="fa-solid fa-pen"></i></button>
-                        <button onclick="toggleVoidEntry('${log.id}')" title="${log.status === 'VOID' ? 'Restore (un-void)' : 'Void'}" class="bg-slate-800 ${log.status === 'VOID' ? 'text-emerald-300' : 'text-orange-300'} px-2 py-1 rounded text-xs"><i class="fa-solid ${log.status === 'VOID' ? 'fa-rotate-left' : 'fa-ban'}"></i></button>
-                        <button onclick="deleteLedgerEntry('${log.id}')" title="Delete" class="bg-slate-800 text-rose-400 px-2 py-1 rounded text-xs"><i class="fa-solid fa-trash-can"></i></button>
+                        <button ${log.raw ? 'style="display:none"' : ''} onclick="openEditModal('${log.id}')" title="Edit" class="bg-slate-800 text-amber-300 px-2 py-1 rounded text-xs"><i class="fa-solid fa-pen"></i></button>
+                        <button ${log.raw ? 'style="display:none"' : ''} onclick="toggleVoidEntry('${log.id}')" title="${log.status === 'VOID' ? 'Restore (un-void)' : 'Void'}" class="bg-slate-800 ${log.status === 'VOID' ? 'text-emerald-300' : 'text-orange-300'} px-2 py-1 rounded text-xs"><i class="fa-solid ${log.status === 'VOID' ? 'fa-rotate-left' : 'fa-ban'}"></i></button>
+                        <button ${log.raw ? 'style="display:none"' : ''} onclick="deleteLedgerEntry('${log.id}')" title="Delete" class="bg-slate-800 text-rose-400 px-2 py-1 rounded text-xs"><i class="fa-solid fa-trash-can"></i></button>
                     </td>
                 </tr>`).join('');
             updateSidebarStats();
@@ -3144,7 +3170,7 @@ function doGet(e) {
                 el.innerHTML = `<button type="button" onclick="toggleSheetMs('${kind}')" class="${compact ? 'text-xs px-2.5 py-1.5 min-w-[150px] max-w-[220px]' : 'text-sm px-2.5 py-2 w-full'} bg-slate-950 border border-slate-700 text-white rounded-lg flex items-center justify-between gap-2"><span class="truncate">${escH(label)}</span><i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i></button>
                     <div class="${sheetMsOpen[kind] ? '' : 'hidden'} absolute z-30 mt-1 ${compact ? 'w-64' : 'w-full'} bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 space-y-1.5">
                         <div class="flex gap-1.5 items-center"><button type="button" onclick="sheetMsClear()" class="${BT}">All sheets</button><span class="text-[10px] text-slate-500 ml-auto">${sel.length} selected</span></div>
-                        <div class="ms-list max-h-56 overflow-y-auto space-y-0.5">${getUserPermittedForms().map(f => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" ${sel.includes(f.id) ? 'checked' : ''} onchange="sheetMsToggle('${escH(f.id)}', this.checked)"><span class="truncate">${escH(f.name)}</span><span class="ml-auto text-slate-500 font-mono">${logs.filter(l => l.formId === f.id).length}</span></label>`).join('')}</div>
+                        <div class="ms-list max-h-56 overflow-y-auto space-y-0.5">${getUserPermittedForms().map(f => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" ${sel.includes(f.id) ? 'checked' : ''} onchange="sheetMsToggle('${escH(f.id)}', this.checked)"><span class="truncate">${escH(f.name)}${f.gsTab ? ' <span class="text-[9px] font-bold text-emerald-400">GOOGLE TAB</span>' : ''}</span><span class="ml-auto text-slate-500 font-mono">${logs.filter(l => l.formId === f.id).length}</span></label>`).join('')}</div>
                     </div>`;
                 const nl = el.querySelector('.ms-list'); if (nl) nl.scrollTop = st;
             });
@@ -3233,16 +3259,16 @@ function doGet(e) {
             const fields = scopeFields(); fillSheetSelects();
             const fill = (id, list, sel) => { document.getElementById(id).innerHTML = list.map(f => `<option value="${escH(f.label)}" ${f.label === sel ? 'selected' : ''}>${escH(f.label)}</option>`).join(''); };
             fill('stmt-unit-field', fields, stmtCfg.unitField);
-            fill('stmt-amount-field', fields.filter(f => ['computation', 'numbers', 'number'].includes(f.type) || f.label === stmtCfg.amountField), stmtCfg.amountField);
+            fill('stmt-amount-field', fields.filter(f => ['computation', 'numbers', 'number'].includes(f.type) || f.gs || f.label === stmtCfg.amountField), stmtCfg.amountField);
             const fillOpt = (id, list, sel) => { document.getElementById(id).innerHTML = `<option value="">— None —</option>` + list.map(f => `<option value="${escH(f.label)}" ${f.label === sel ? 'selected' : ''}>${escH(f.label)}</option>`).join(''); };
             const numeric = fields.filter(f => ['computation', 'numbers', 'number'].includes(f.type));
-            fillOpt('stmt-date-field', fields.filter(f => f.type === 'date'), stmtCfg.dateField);
+            fillOpt('stmt-date-field', fields.filter(f => f.type === 'date' || f.gs), stmtCfg.dateField);
             fillOpt('stmt-ref-field', fields, stmtCfg.refField);
             fillOpt('stmt-qty-field', fields, stmtCfg.qtyField);
             fillOpt('stmt-rate-field', fields, stmtCfg.rateField);
             [1, 2, 3].forEach(i => fillOpt('stmt-desc' + i + '-field', fields, stmtCfg.desc[i - 1]));
             [1, 2].forEach(i => fillOpt('stmt-sub' + i + '-field', fields, stmtCfg.sub[i - 1]));
-            fillOpt('stmt-type-field', fields.filter(f => !['numbers', 'number', 'computation'].includes(f.type) || f.label === stmtCfg.typeField), stmtCfg.typeField);
+            fillOpt('stmt-type-field', fields.filter(f => !['numbers', 'number', 'computation'].includes(f.type) || f.gs || f.label === stmtCfg.typeField), stmtCfg.typeField);
             [['stmt-income-words', stmtCfg.incomeWords], ['stmt-cost-words', stmtCfg.costWords]].forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v || ''; });
             const set = (id, v) => { const el = document.getElementById(id); if (el && !stmtReady) el.value = v || ''; };
             set('stmt-billed-to', stmtCfg.billedTo); set('stmt-project', stmtCfg.project); set('stmt-remarks', stmtCfg.remarks);
@@ -3265,12 +3291,20 @@ function doGet(e) {
             saveStmtCfg(); renderStatement();
         }
 
+        function normDate(v) {   // accepts 5/11/2026, 11-05-2026, 5 Nov 2026, Nov 5, 2026 ...
+            v = String(v || '').trim(); if (!v) return '';
+            let m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+            if (m) { let a = +m[1], b = +m[2], y = +m[3]; if (y < 100) y += 2000; let mo = a, d = b; if (a > 12) { d = a; mo = b; } if (mo < 1 || mo > 12 || d < 1 || d > 31) return ''; return y + '-' + pad2(mo) + '-' + pad2(d); }
+            const t = Date.parse(v); if (!isNaN(t) && /[A-Za-z]/.test(v)) { const d = new Date(t); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+            return '';
+        }
         function getLogDate(log) {
             const form = forms.find(f => f.id === log.formId);
             const mapped = stmtCfg && M(log).dateField;
             const df = mapped ? { label: mapped } : (form && (form.fields || []).find(f => f.type === 'date'));
             const v = df && log.data ? String(log.data[df.label] || '') : '';
             if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+            const nd = v ? normDate(v) : ''; if (nd) return nd;
             return String(log.timestamp || '').slice(0, 10);
         }
         const getLogAmount = log => {
@@ -3627,9 +3661,9 @@ ${A.add ? `<tr class="bg-slate-800/40"><td class="p-2.5 font-semibold text-slate
   <tfoot><tr><td>TOTAL</td>${col(S.tx)}${col(fmtMoney(S.amt))}${col(S.hasTarget ? fmtMoney(S.tgt) : '—')}${col(S.diff == null ? '—' : fmtDiff(S.diff))}</tr></tfoot></table>
   <div class="note">Actual Amount is net of any items marked as deductions. Difference = Actual Amount − Target Amount. A positive figure is over target; a negative figure is under target.${S.voided ? ` ${S.voided} voided ticket${S.voided === 1 ? '' : 's'} excluded.` : ''}</div>
 
-  <div class="sec">Transaction Details</div>
+  <!--TXD--><div class="sec">Transaction Details</div>
   <table class="grid detail">${detailColgroup}<thead><tr>${detailHead}</tr></thead><tbody>${detail || `<tr><td colspan="${nC}" class="empty">No transactions in this coverage.</td></tr>`}</tbody>
-  <tfoot><tr><td colspan="${nC - 1}" class="a-r">${S.nDed ? 'NET GRAND TOTAL' : 'GRAND TOTAL'}</td><td class="a-r">${S.amt < 0 ? '(' + fmtMoney(-S.amt) + ')' : fmtMoney(S.amt)}</td></tr></tfoot></table>
+  <tfoot><tr><td colspan="${nC - 1}" class="a-r">${S.nDed ? 'NET GRAND TOTAL' : 'GRAND TOTAL'}</td><td class="a-r">${S.amt < 0 ? '(' + fmtMoney(-S.amt) + ')' : fmtMoney(S.amt)}</td></tr></tfoot></table><!--/TXD-->
   ${S.nDed ? `<table class="meta" style="margin-top:6px"><tr><td><b>Total Additional</b></td><td style="text-align:right">${fmtMoney(S.addT)}</td><td><b>Total Deductions</b></td><td style="text-align:right">(${fmtMoney(S.dedT)})</td><td><b>Net Total</b></td><td style="text-align:right"><b>${fmtMoney(S.amt)}</b></td></tr></table>` : ''}
 
   ${S.adj.active ? buildReceiptHtml(S) : ''}
@@ -3692,7 +3726,11 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
 .soa .sigline{border-bottom:1px solid #111;height:30px;font-weight:700;display:flex;align-items:flex-end;justify-content:center;padding-bottom:2px}
 .soa .signame{font-weight:800;margin-top:4px;text-transform:uppercase;font-size:10px;letter-spacing:1px}.soa .sigrole{font-size:9.5px;color:#444;min-height:12px}.soa .sigdate{font-size:9px;color:#666;margin-top:10px}
 .soa .foot{margin-top:22px;border-top:1px solid #ccc;padding-top:5px;text-align:center;font-size:8.5px;color:#888}
-.soa tr{page-break-inside:avoid}`;
+.soa tr{page-break-inside:avoid}
+.soa .pv{table-layout:auto;font-size:10px}.soa .pv th{white-space:normal}.soa .pv td.pvl{font-weight:600;color:#0f2a4a}
+.soa .pv tr.pvsub td{background:#f1f4f8;font-weight:700;border-top:1px solid #9aa8ba}
+.soa .pv tr.pvtot td{background:#0f2a4a;color:#fff;font-weight:800}
+.soa .pv tr.pvsub td,.soa .pv tr.pvtot td{-webkit-print-color-adjust:exact;print-color-adjust:exact}`;
 
         // inject the same stylesheet into the live preview
         (function () { const s = document.createElement('style'); s.textContent = STMT_CSS; document.head.appendChild(s); })();
@@ -3763,6 +3801,7 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
         }
 
         function postDeleteToGoogleSheet(logEntry) {
+            if (logEntry && logEntry.raw) return;
             const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
             if (settings.webappId && settings.webappId.startsWith('http')) {
                 fetch(settings.webappId, {
@@ -3968,7 +4007,7 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
         // Form Designer Workspace
         function renderDesignerFormList() {
             const list = document.getElementById('designer-form-list');
-            list.innerHTML = forms.map(f => `
+            list.innerHTML = forms.filter(f => !f.gsTab).map(f => `
                 <div onclick="selectFormForDesign('${f.id}')" class="p-3 rounded-xl border cursor-pointer transition flex items-center justify-between ${f.id === selectedDesignFormId ? 'bg-blue-600/20 border-blue-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-300'}">
                     <span>${f.name}</span>
                     <button onclick="event.stopPropagation(); deleteForm('${f.id}')" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button>
@@ -4191,17 +4230,36 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
             const field = form.fields.find(f => f.id === activeDropdownEditingField.fieldId);
             if(!field.options) field.options = [];
             document.getElementById('modal-dropdown-items-container').innerHTML = field.options.map((opt, i) => `
-                <div class="flex items-center justify-between bg-slate-900 px-3 py-2 rounded-xl text-xs"><span class="text-white">${opt}</span><button onclick="removeDropdownOptionItem(${i})" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button></div>
+                <div class="flex items-center justify-between bg-slate-900 px-3 py-2 rounded-xl text-xs"><span class="text-white">${escHtml(opt)}</span><button onclick="removeDropdownOptionItem(${i})" class="text-rose-400"><i class="fa-solid fa-trash-can"></i></button></div>
             `).join('');
         }
         function addDropdownOptionItem() {
             const input = document.getElementById('new-dropdown-item-input');
-            const val = input.value.trim();
-            if(!val) return;
+            const raw = input.value;
+            if(!raw.trim()) return;
             const form = forms.find(f => f.id === activeDropdownEditingField.formId);
             const field = form.fields.find(f => f.id === activeDropdownEditingField.fieldId);
             if(!field.options) field.options = [];
-            field.options.push(val); input.value = ''; renderDropdownOptionsList();
+            // Split batch: comma, semicolon, new line, tab
+            const items = raw.split(/[,;\n\r\t]+/).map(v => v.trim().replace(/^["']|["']$/g, '').trim()).filter(Boolean);
+            const seen = new Set(field.options.map(o => String(o).toLowerCase()));
+            let added = 0, skipped = 0;
+            items.forEach(v => {
+                const k = v.toLowerCase();
+                if(seen.has(k)) { skipped++; return; }
+                seen.add(k); field.options.push(v); added++;
+            });
+            input.value = '';
+            renderDropdownOptionsList();
+            if(typeof showToast === 'function') showToast(`${added} option${added !== 1 ? 's' : ''} added` + (skipped ? `, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped` : ''), added ? 'success' : 'error');
+            input.focus();
+        }
+        function clearDropdownOptionItems() {
+            const form = forms.find(f => f.id === activeDropdownEditingField.formId);
+            const field = form.fields.find(f => f.id === activeDropdownEditingField.fieldId);
+            if(!field.options || !field.options.length) return;
+            if(!confirm('Remove all options from this list?')) return;
+            field.options = []; renderDropdownOptionsList();
         }
         function removeDropdownOptionItem(i) {
             const form = forms.find(f => f.id === activeDropdownEditingField.formId);
@@ -5252,11 +5310,11 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
                 const fields = f.fields || [], m = Object.assign({}, stmtCfg, (stmtCfg.maps || {})[mapSheet] || {});
                 const fill = (id, list, sel, opt) => { const el = document.getElementById(id); if (el) el.innerHTML = (opt ? '<option value="">— None —</option>' : '') + list.map(x => `<option value="${escH(x.label)}" ${x.label === sel ? 'selected' : ''}>${escH(x.label)}</option>`).join(''); };
                 const num = ['computation', 'numbers', 'number'];
-                fill('stmt-unit-field', fields, m.unitField); fill('stmt-amount-field', fields.filter(x => num.includes(x.type)), m.amountField);
-                fill('stmt-date-field', fields.filter(x => x.type === 'date'), m.dateField, 1); fill('stmt-ref-field', fields, m.refField, 1);
+                fill('stmt-unit-field', fields, m.unitField); fill('stmt-amount-field', fields.filter(x => num.includes(x.type) || x.gs), m.amountField);
+                fill('stmt-date-field', fields.filter(x => x.type === 'date' || x.gs), m.dateField, 1); fill('stmt-ref-field', fields, m.refField, 1);
                 fill('stmt-qty-field', fields, m.qtyField, 1); fill('stmt-rate-field', fields, m.rateField, 1);
                 [1, 2, 3].forEach(i => fill('stmt-desc' + i + '-field', fields, (m.desc || [])[i - 1], 1)); [1, 2].forEach(i => fill('stmt-sub' + i + '-field', fields, (m.sub || [])[i - 1], 1));
-                fill('stmt-type-field', fields.filter(x => !num.includes(x.type)), m.typeField, 1);
+                fill('stmt-type-field', fields.filter(x => !num.includes(x.type) || x.gs), m.typeField, 1);
                 const w = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; }; w('stmt-income-words', m.incomeWords); w('stmt-cost-words', m.costWords);
             }
             const _init = initStatementTab;
@@ -5283,6 +5341,661 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
             const _sw = switchTab; switchTab = function (t) { _sw.apply(this, arguments); if (t === 'transmissions') { mountLogPanel(); renderAdminLog(); } };
             setTimeout(() => ping(true), 1200);
         })();
+
+        // =====================================================================
+        // GOOGLE TABS AS DASHBOARD SHEETS: every tab of the Google Spreadsheet (formatted or not) can be
+        // selected, combined and mapped per sheet. Each sheet computes with ITS OWN fields; the dashboard sums them.
+        // =====================================================================
+        (function () {
+            let ver = 0;
+            const hash = x => { let h = 0; for (let i = 0; i < x.length; i++) h = (h * 31 + x.charCodeAt(i)) | 0; return Math.abs(h).toString(36); };
+            const tabId = n => 'gs_' + String(n).toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 20) + '_' + hash(String(n).toLowerCase());
+            function inferType(vals) {
+                const v = vals.map(x => String(x == null ? '' : x).trim()).filter(Boolean); if (!v.length) return 'text';
+                if (v.filter(x => /^(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/.test(x)).length / v.length >= 0.7) return 'date';
+                if (v.filter(x => /^-?\(?\d[\d,]*\.?\d*\)?%?$|^-?\.\d+$/.test(x.replace(/[₱$€£\s]/g, ''))).length / v.length >= 0.6) return 'numbers';
+                return 'text';
+            }
+            window.gsEnsureTabForms = function (j) {
+                if (!j || !j.tabHeaders) return false;
+                let changed = false;
+                const realNames = new Set(forms.filter(f => !f.gsTab).map(f => String(f.name).toLowerCase()));
+                const keep = forms.filter(f => !f.gsTab || (j.tabHeaders[f.name] && !realNames.has(String(f.name).toLowerCase())));
+                if (keep.length !== forms.length) { forms = keep; changed = true; }
+                Object.keys(j.tabHeaders).forEach(tab => {
+                    if (realNames.has(tab.toLowerCase())) return;
+                    const heads = j.tabHeaders[tab] || [];
+                    let f = forms.find(x => x.gsTab && x.name === tab);
+                    if (!f) { f = { id: tabId(tab), name: tab, gsTab: true, allowedRoles: ['Administrator'], fields: [] }; forms.push(f); changed = true; }
+                    const have = new Set(f.fields.map(x => x.label)); let samples = null;
+                    heads.forEach(h => {
+                        if (have.has(h)) return;
+                        if (!samples) samples = (j.rows || []).filter(r => r.formName === tab).slice(0, 300);
+                        f.fields.push({ id: 'gf_' + hash(tab + '|' + h), label: h, type: inferType(samples.map(r => (r.data || {})[h])), required: false, gs: true }); changed = true;
+                    });
+                    const hs = new Set(heads), nf = f.fields.filter(x => hs.has(x.label)); if (nf.length !== f.fields.length) { f.fields = nf; changed = true; }
+                });
+                logs.forEach(l => { if (!forms.some(f => f.id === l.formId)) { const f = forms.find(x => String(x.name).toLowerCase() === String(l.formName).toLowerCase()); if (f) l.formId = f.id; } });
+                if (changed) { ver++; try { localStorage.setItem('ullswater_forms', JSON.stringify(forms)); } catch (e) {} }
+                return changed;
+            };
+
+            // ---- auto mapping for a sheet whose columns do not match the shared mapping ----
+            function autoMap(form) {
+                const F = form.fields || [], num = ['computation', 'numbers', 'number'];
+                const find = (re, pool) => { const g = (pool || F).find(x => re.test(x.label)); return g ? g.label : ''; };
+                const a = {};
+                a.unitField = find(/^dt\b|unit|asset|truck|plate|^cashier$/i) || ((F.find(x => x.type === 'dropdown') || {}).label) || ((F.find(x => !num.includes(x.type) && x.type !== 'date') || F[0] || {}).label) || '';
+                a.amountField = find(/^total amount$/i) || find(/amount/i) || find(/total|net|gross|value|price|cost/i) || ((F.find(x => x.type === 'computation') || F.find(x => num.includes(x.type)) || {}).label) || '';
+                a.dateField = ((F.find(x => x.type === 'date') || {}).label) || find(/date/i);
+                a.refField = find(/ticket|ref|\bno\b|number/i); a.qtyField = find(/capacity|qty|quantity|volume|load/i); a.rateField = find(/rate|price/i);
+                a.typeField = find(/income|expense|revenue|\bcost\b|\btype\b|nature/i, F.filter(x => !num.includes(x.type) || x.gs));
+                let d = [find(/^activity$/i), find(/^material$/i), ''];
+                if (!d[0] && !d[1]) { const skip = new Set([a.unitField, a.dateField, a.refField, a.amountField, a.typeField]); d = F.filter(x => !skip.has(x.label) && !num.includes(x.type) && x.type !== 'date').slice(0, 2).map(x => x.label); while (d.length < 3) d.push(''); }
+                a.desc = d; a.sub = [find(/source/i), find(/dump|destination/i)];
+                return a;
+            }
+            const SC = ['unitField', 'amountField', 'dateField', 'refField', 'qtyField', 'rateField', 'typeField'];
+            function fit(cfg, form) {
+                const has = l => (form.fields || []).some(x => x.label === l);
+                const bad = SC.filter(k => cfg[k] && !has(cfg[k])), badArr = ['desc', 'sub'].filter(k => Array.isArray(cfg[k]) && cfg[k].some(x => x && !has(x)));
+                if (!bad.length && !badArr.length) return cfg;
+                const out = Object.assign({}, cfg), a = autoMap(form);
+                bad.forEach(k => { out[k] = a[k]; });
+                badArr.forEach(k => { const c = cfg[k].map(x => (x && has(x)) ? x : ''); out[k] = c.some(Boolean) ? c : a[k].slice(0, cfg[k].length); while (out[k].length < cfg[k].length) out[k].push(''); });
+                return out;
+            }
+            const cache = new Map();
+            window.M = log => {
+                const c = stmtCfg || {}; if (!log) return c;
+                const form = forms.find(x => x.id === log.formId);
+                const ent = cache.get(log.formId);
+                if (ent && ent.ver === ver && ent.cfg === c && ent.form === form && ent.n === (form && form.fields ? form.fields.length : 0)) return ent.out;
+                const m = c.maps && c.maps[log.formId];
+                let out = m ? Object.assign({}, c, m) : c;
+                if (form && form.fields) out = fit(out, form);
+                cache.set(log.formId, { ver, cfg: c, form, n: form && form.fields ? form.fields.length : 0, out });
+                return out;
+            };
+            const _ss = saveStmtCfg; saveStmtCfg = function () { ver++; return _ss.apply(this, arguments); };
+
+            // ---- per-sheet summary: which field each combined sheet computes + its subtotal ----
+            function renderGsSummary() {
+                const first = document.getElementById('stmt-unit-field'); if (!first) return;
+                const host = first.closest('.space-y-2'); if (!host) return;
+                let box = document.getElementById('stmt-gs-sum');
+                if (!box) { box = document.createElement('div'); box.id = 'stmt-gs-sum'; host.prepend(box); }
+                const ids = getSheetIds().filter(i => forms.some(f => f.id === i));
+                if (ids.length < 2) { box.className = 'hidden'; box.innerHTML = ''; return; }
+                const from = (document.getElementById('stmt-from') || {}).value || '', to = (document.getElementById('stmt-to') || {}).value || '';
+                let grand = 0;
+                const rows = ids.map(id => {
+                    const f = forms.find(x => x.id === id), m = window.M({ formId: id });
+                    const list = logs.filter(l => l.formId === id && l.status !== 'VOID' && logAllowed(l) && (!from || getLogDate(l) >= from) && (!to || getLogDate(l) <= to));
+                    const sub = list.reduce((t, l) => t + getLogSigned(l), 0); grand += sub;
+                    const warn = !m.amountField;
+                    return `<div class="flex items-start justify-between gap-2 py-1.5 border-b border-slate-800/70 last:border-0">
+                        <div class="min-w-0"><div class="text-[11px] font-semibold text-white truncate">${escH(f.name)}${f.gsTab ? ' <span class="text-[9px] text-emerald-400">GOOGLE TAB</span>' : ''}</div>
+                        <div class="text-[10px] ${warn ? 'text-rose-400' : 'text-slate-400'} leading-snug">${warn ? 'No amount field chosen' : 'Computes: <b class="text-amber-300">' + escH(m.amountField) + '</b>'} · Group by: ${escH(m.unitField || '—')} · Date: ${escH(m.dateField || 'entry time')}</div></div>
+                        <div class="text-right shrink-0"><div class="text-[11px] font-mono text-emerald-300">${fmtNet(sub)}</div><button type="button" onclick="rtMapSheetChange('${escH(id)}')" class="text-[10px] text-blue-400 hover:text-blue-300 font-semibold">Configure</button></div></div>`;
+                }).join('');
+                box.className = 'bg-slate-950/70 border border-emerald-500/30 rounded-lg p-2.5';
+                box.innerHTML = `<div class="text-[10px] font-bold text-emerald-300 uppercase mb-1">Combined sheets — each uses its own fields</div>${rows}
+                    <div class="flex justify-between pt-1.5 text-[11px] font-bold text-white"><span>Combined total</span><span class="font-mono text-emerald-300">${fmtNet(grand)}</span></div>
+                    <div class="text-[10px] text-slate-500 mt-1">Pick a sheet in “Configure fields for” below to choose its amount field (what is computed) and the fields shown for it. Sheets left on auto-detect use the best matching columns.</div>`;
+            }
+            const _rs = renderStatement; renderStatement = function () { const r = _rs.apply(this, arguments); try { renderGsSummary(); } catch (e) {} return r; };
+        })();
     </script>
+<script>
+// =====================================================================
+// PIVOT STATEMENT BUILDER  +  STATEMENT LEDGER (copy of every printed / emailed statement)
+// =====================================================================
+(function () {
+    const SEP = '\u0001';
+    const AGG = { sum: 'Sum', count: 'Count', avg: 'Average', min: 'Minimum', max: 'Maximum' };
+    const NUMT = ['computation', 'numbers', 'number'];
+
+    // ---------------------------------------------------------------- pivot config
+    function pvCfg() {
+        const c = stmtCfg || (stmtCfg = {});
+        const d = { layout: 'standard', rows: ['__unit'], cols: [], val: '__amount', agg: 'sum', filters: [], subtotals: true, totals: true, landscape: false };
+        c.pivot = Object.assign(d, c.pivot || {});
+        ['rows', 'cols', 'filters'].forEach(k => { if (!Array.isArray(c.pivot[k])) c.pivot[k] = []; });
+        return c.pivot;
+    }
+    const pvLayout = () => (stmtCfg && stmtCfg.pivot && stmtCfg.pivot.layout) || 'standard';
+    const pvSave = () => { try { saveStmtCfg(); } catch (e) {} renderStatement(); };
+
+    // ---------------------------------------------------------------- fields
+    const PV_VIRT = [['__sheet', 'Sheet'], ['__unit', null], ['__date', 'Date (day)'], ['__month', 'Month'], ['__year', 'Year'], ['__mode', 'Add / Deduct'], ['__type', 'Type column (Revenue / Cost)']];
+    function pvFields() {
+        const out = PV_VIRT.map(([k, l]) => ({ key: k, label: k === '__unit' ? ((stmtCfg && stmtCfg.unitField) || 'Asset Unit') : l, virt: true }));
+        const seen = new Set([(stmtCfg && stmtCfg.unitField) || 'Asset Unit']);
+        (typeof scopeFields === 'function' ? scopeFields() : []).forEach(f => { if (seen.has(f.label)) return; seen.add(f.label); out.push({ key: 'f:' + f.label, label: f.label, type: f.type, virt: false }); });
+        return out;
+    }
+    const pvLabel = k => { const f = pvFields().find(x => x.key === k); return f ? f.label : (String(k).startsWith('f:') ? String(k).slice(2) : k); };
+    function pvValueOptions() {
+        const o = [['__amount', 'Amount (mapped per sheet · Add/Deduct applied)'], ['__amount_abs', 'Amount (all positive · ignore Add/Deduct)']];
+        pvFields().filter(f => !f.virt && (NUMT.includes(f.type) || f.type === 'numbers')).forEach(f => o.push([f.key, f.label]));
+        return o;
+    }
+    const pvValLabel = k => { const o = pvValueOptions().find(x => x[0] === k); return o ? o[1].replace(/ \(.*$/, '') : pvLabel(k); };
+    const numOf2 = v => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
+
+    function pvGet(l, k) {
+        const d = l.data || {};
+        switch (k) {
+            case '__sheet': return ((forms.find(f => f.id === l.formId) || {}).name) || l.formName || '(unknown sheet)';
+            case '__unit': return getLogUnit(l);
+            case '__date': return getLogDate(l) || '(no date)';
+            case '__month': return (getLogDate(l) || '').slice(0, 7) || '(no date)';
+            case '__year': return (getLogDate(l) || '').slice(0, 4) || '(no date)';
+            case '__mode': return getLogMode(l) === 'ded' ? 'Deduction' : 'Additional';
+            case '__type': { const f = M(l).typeField; const v = f ? d[f] : ''; return String(v == null ? '' : v).trim() || '(blank)'; }
+            default: { const v = d[String(k).slice(2)]; return String(v == null ? '' : v).trim() || '(blank)'; }
+        }
+    }
+    function pvVal(l) {
+        const k = pvCfg().val;
+        if (k === '__amount') return getLogSigned(l);
+        if (k === '__amount_abs') return getLogAmount(l);
+        return numOf2((l.data || {})[String(k).slice(2)]);
+    }
+    function pvDisp(k, v) {
+        if (v === '(blank)' || v === '(no date)') return v;
+        if (k === '__date') return fmtDate(v);
+        if (k === '__month') { const d = new Date(v + '-01T00:00:00'); return isNaN(d) ? v : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }); }
+        return v;
+    }
+    const pvCmp = k => (a, b) => {
+        const ba = /^\(/.test(a), bb = /^\(/.test(b); if (ba !== bb) return ba ? 1 : -1;
+        return String(a).localeCompare(String(b), undefined, { numeric: true });
+    };
+    function pvBaseRows() {
+        const from = (document.getElementById('stmt-from') || {}).value || '', to = (document.getElementById('stmt-to') || {}).value || '';
+        const sel = getSelUnits('stmt');
+        return logs.filter(l => {
+            if (l.status === 'VOID' || !sheetMatch(l)) return false;
+            const d = getLogDate(l); if ((from && d < from) || (to && d > to)) return false;
+            if (sel.length && !sel.includes(getLogUnit(l))) return false;
+            return true;
+        });
+    }
+
+    // ---------------------------------------------------------------- compute
+    const mk = () => ({ s: 0, n: 0, mn: Infinity, mx: -Infinity });
+    const addTo = (a, v) => { a.s += v; a.n++; if (v < a.mn) a.mn = v; if (v > a.mx) a.mx = v; };
+    const merge = (a, b) => { if (!b) return; a.s += b.s; a.n += b.n; if (b.mn < a.mn) a.mn = b.mn; if (b.mx > a.mx) a.mx = b.mx; };
+    function pvCompute() {
+        const P = pvCfg(); let rows = pvBaseRows();
+        P.filters.forEach(f => { if (f.ex && f.ex.length) { const ex = new Set(f.ex); rows = rows.filter(l => !ex.has(pvGet(l, f.key))); } });
+        const rmap = new Map(), cmap = new Map(), cell = new Map(), rtot = new Map(), ctot = new Map(), grand = mk();
+        const bump = (m, key) => { let a = m.get(key); if (!a) { a = mk(); m.set(key, a); } return a; };
+        rows.forEach(l => {
+            const rt = P.rows.map(k => pvGet(l, k)), ct = P.cols.map(k => pvGet(l, k));
+            const rk = rt.join(SEP), ck = ct.join(SEP);
+            if (!rmap.has(rk)) rmap.set(rk, rt); if (!cmap.has(ck)) cmap.set(ck, ct);
+            const v = pvVal(l);
+            addTo(bump(cell, rk + '\u0002' + ck), v); addTo(bump(rtot, rk), v); addTo(bump(ctot, ck), v); addTo(grand, v);
+        });
+        const cmpT = keys => (A, B) => { for (let i = 0; i < keys.length; i++) { const c = pvCmp(keys[i])(A[1][i], B[1][i]); if (c) return c; } return 0; };
+        const rk = [...rmap.entries()].sort(cmpT(P.rows)), ck = [...cmap.entries()].sort(cmpT(P.cols));
+        let truncated = false; if (ck.length > 40) { ck.length = 40; truncated = true; }
+        return { rows: rk, cols: ck, cell, rtot, ctot, grand, n: rows.length, truncated };
+    }
+    function pvStr(a, doc) {
+        if (!a || !a.n) return '';
+        const g = pvCfg().agg;
+        const v = g === 'count' ? a.n : g === 'avg' ? a.s / a.n : g === 'min' ? a.mn : g === 'max' ? a.mx : a.s;
+        if (g === 'count') return v.toLocaleString('en-US');
+        return doc ? (v < 0 ? '(' + fmtMoney(-v) + ')' : fmtMoney(v)) : fmtNet(v);
+    }
+    const pvNeg = a => { if (!a || !a.n) return false; const g = pvCfg().agg; const v = g === 'avg' ? a.s / a.n : g === 'min' ? a.mn : g === 'max' ? a.mx : a.s; return g !== 'count' && v < 0; };
+
+    // ---------------------------------------------------------------- table html (theme: 'dark' dashboard | 'doc' statement)
+    function pvTableHtml(R, theme) {
+        const P = pvCfg(), doc = theme === 'doc', nr = P.rows.length, hasC = P.cols.length > 0, cols = R.cols;
+        const TH = (t, right) => doc ? `<th class="${right ? 'a-r' : 'a-l'}">${escH(t)}</th>` : `<th class="p-2.5 whitespace-nowrap ${right ? 'text-right' : 'text-left'}">${escH(t)}</th>`;
+        const TL = (t, span, cls) => doc ? `<td class="pvl a-l" ${span > 1 ? 'colspan="' + span + '"' : ''}>${escH(t)}</td>` : `<td class="p-2.5 ${cls || 'text-slate-200'}" ${span > 1 ? 'colspan="' + span + '"' : ''}>${escH(t)}</td>`;
+        const TN = (a, cls) => doc ? `<td class="a-r" ${pvNeg(a) ? 'style="color:#b91c1c"' : ''}>${pvStr(a, true) || '–'}</td>` : `<td class="p-2.5 text-right font-mono whitespace-nowrap ${pvNeg(a) ? 'text-rose-300' : (cls || 'text-slate-200')}">${pvStr(a, false) || '<span class="text-slate-600">–</span>'}</td>`;
+        const TR = (inner, kind) => doc ? `<tr class="${kind === 'sub' ? 'pvsub' : kind === 'tot' ? 'pvtot' : ''}">${inner}</tr>` : `<tr class="${kind === 'sub' ? 'bg-slate-800/50 font-bold' : kind === 'tot' ? 'bg-amber-900/30 font-bold text-amber-300' : 'hover:bg-slate-800/40'} border-t border-slate-800/60">${inner}</tr>`;
+        const valHead = AGG[P.agg] + ' of ' + pvValLabel(P.val);
+
+        let head = nr ? P.rows.map(k => TH(pvLabel(k), false)).join('') : TH('', false);
+        if (hasC) head += cols.map(([ck, ct]) => TH(ct.map((v, i) => pvDisp(P.cols[i], v)).join(' › '), true)).join(''); else head += TH(valHead, true);
+        if (hasC && P.totals) head += TH('Total', true);
+
+        const cellsFor = rks => cols.map(([ck]) => { const a = mk(); rks.forEach(rk => merge(a, R.cell.get(rk + '\u0002' + ck))); return a; });
+        const totFor = rks => { const a = mk(); rks.forEach(rk => merge(a, R.rtot.get(rk))); return a; };
+        const rowCells = (accs, tot, tcls) => accs.map(a => TN(a, tcls)).join('') + (hasC && P.totals ? TN(tot, tcls || 'text-amber-200') : '');
+        const labelSpan = Math.max(1, nr);
+
+        let body = '', prev = null, group = [];
+        const flush = () => {
+            if (!group.length || !(P.subtotals && nr >= 2)) { group = []; return; }
+            body += TR(TL('Subtotal – ' + pvDisp(P.rows[0], prev[0]), labelSpan) + rowCells(cellsFor(group), totFor(group)), 'sub'); group = [];
+        };
+        R.rows.forEach(([rk, rt]) => {
+            if (prev && P.subtotals && nr >= 2 && rt[0] !== prev[0]) flush();
+            let lab = '';
+            if (nr) for (let j = 0; j < nr; j++) lab += (prev && rt.slice(0, j + 1).join(SEP) === prev.slice(0, j + 1).join(SEP)) ? (doc ? '<td></td>' : '<td class="p-2.5"></td>') : TL(pvDisp(P.rows[j], rt[j]), 1, 'text-blue-200 font-semibold');
+            else lab = TL('All entries', 1);
+            body += TR(lab + rowCells(cellsFor([rk]), totFor([rk])));
+            group.push(rk); prev = rt;
+        });
+        flush();
+        if (P.totals) {
+            const accs = cols.map(([ck]) => R.ctot.get(ck));
+            body += TR(TL('Grand Total', labelSpan) + rowCells(accs, R.grand), 'tot');
+        }
+        const tbl = doc ? 'class="grid pv"' : 'class="w-full text-xs text-slate-300"';
+        const thead = doc ? `<thead><tr>${head}</tr></thead>` : `<thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr>${head}</tr></thead>`;
+        return `<table ${tbl}>${thead}<tbody>${body}</tbody></table>${R.truncated ? `<div class="${doc ? 'note' : 'text-[10px] text-amber-400 mt-1'}">Only the first 40 columns are shown — pick a coarser column field (e.g. Month instead of Date).</div>` : ''}`;
+    }
+    function pvTitle() {
+        const P = pvCfg();
+        return `${AGG[P.agg]} of ${pvValLabel(P.val)}` + (P.rows.length ? ' by ' + P.rows.map(pvLabel).join(' › ') : '') + (P.cols.length ? ' × ' + P.cols.map(pvLabel).join(' › ') : '');
+    }
+    function pvDocHtml() {
+        const P = pvCfg(), R = pvCompute();
+        const fl = P.filters.filter(f => f.ex && f.ex.length).map(f => pvLabel(f.key));
+        return `<div class="sec">Pivot Summary</div><div class="note" style="margin:0 0 5px;font-style:normal;font-size:10px">${escH(pvTitle())}${fl.length ? ' · filtered by ' + escH(fl.join(', ')) : ''}</div>${R.n ? pvTableHtml(R, 'doc') : '<div class="remarks" style="text-align:center;color:#888">No transactions in this coverage.</div>'}<div class="note">Net figures follow the Add / Deduct marking of each entry. Voided tickets are excluded.</div>`;
+    }
+
+    // ---------------------------------------------------------------- patch the statement document
+    const _bsd = buildStatementDocHtml;
+    buildStatementDocHtml = function (S, forPrint) {
+        let h = _bsd.call(this, S, forPrint);
+        const lay = pvLayout(); if (lay === 'standard') return h;
+        let pv = ''; try { pv = pvDocHtml(); } catch (e) { console.error(e); return h; }
+        if (lay === 'pivot') return h.replace(/<!--TXD-->[\s\S]*?<!--\/TXD-->/, () => pv);
+        return h.replace('<!--TXD-->', () => pv + '<!--TXD-->');
+    };
+
+    // ---------------------------------------------------------------- dashboard pivot card
+    const pvOpen = {};
+    const PRESETS = [
+        ['Unit × Month', { rows: ['__unit'], cols: ['__month'] }],
+        ['Sheet › Unit', { rows: ['__sheet', '__unit'], cols: [] }],
+        ['Date × Unit', { rows: ['__date'], cols: ['__unit'] }],
+        ['Unit × Add/Deduct', { rows: ['__unit'], cols: ['__mode'] }],
+        ['Month › Unit × Sheet', { rows: ['__month', '__unit'], cols: ['__sheet'] }]
+    ];
+    function mountPivotCard() {
+        if (document.getElementById('stmt-pivot-card')) return;
+        const prev = document.getElementById('stmt-preview'); if (!prev) return;
+        const wrap = prev.closest('.overflow-x-auto').parentElement;
+        const d = document.createElement('div'); d.id = 'stmt-pivot-card'; d.className = 'bg-slate-900 border border-violet-700/40 rounded-2xl overflow-hidden';
+        wrap.parentElement.insertBefore(d, wrap);
+    }
+    const SEL = 'bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2';
+    const BTN = 'bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-lg border border-slate-700';
+    function pill(zone, i, label, n) {
+        return `<span class="inline-flex items-center gap-1 bg-violet-900/40 border border-violet-600/60 text-violet-100 text-[11px] rounded-lg pl-2 pr-1 py-1"><b class="text-violet-300">${n}</b>${escH(label)}<button type="button" onclick="pvMove('${zone}',${i},-1)" class="px-1 text-slate-400 hover:text-white" title="Move earlier">◀</button><button type="button" onclick="pvMove('${zone}',${i},1)" class="px-1 text-slate-400 hover:text-white" title="Move later">▶</button><button type="button" onclick="pvRemove('${zone}',${i})" class="px-1 text-rose-300 hover:text-rose-200" title="Remove">✕</button></span>`;
+    }
+    function zone(title, hint, key, P, fields) {
+        const used = new Set([...P.rows, ...P.cols]);
+        const opts = fields.filter(f => !used.has(f.key)).map(f => `<option value="${escH(f.key)}">${escH(f.label)}</option>`).join('');
+        return `<div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3"><div class="text-[10px] font-bold text-violet-300 uppercase tracking-wider">${title}</div><div class="text-[10px] text-slate-500 mb-2">${hint}</div><div class="flex flex-wrap gap-1.5 mb-2">${P[key].length ? P[key].map((k, i) => pill(key, i, pvLabel(k), i + 1)).join('') : '<span class="text-[11px] text-slate-600">— none —</span>'}</div><select onchange="pvAdd('${key}',this.value);" class="w-full ${SEL}"><option value="">+ Add field…</option>${opts}</select></div>`;
+    }
+    function pvRender() {
+        mountPivotCard();
+        const el = document.getElementById('stmt-pivot-card'); if (!el || !stmtCfg) return;
+        const P = pvCfg(), fields = pvFields(), R = pvCompute(), base = pvBaseRows();
+        const valOpts = pvValueOptions().map(([k, l]) => `<option value="${escH(k)}" ${k === P.val ? 'selected' : ''}>${escH(l)}</option>`).join('');
+        const aggOpts = Object.entries(AGG).map(([k, l]) => `<option value="${k}" ${k === P.agg ? 'selected' : ''}>${l}</option>`).join('');
+        const layouts = (stmtCfg.pivotLayouts && Object.keys(stmtCfg.pivotLayouts)) || [];
+        const rad = (v, t) => `<label class="flex items-center gap-1.5 text-[11px] text-slate-200 cursor-pointer"><input type="radio" name="pv-layout" class="accent-violet-500" ${P.layout === v ? 'checked' : ''} onchange="pvSet('layout','${v}')">${t}</label>`;
+        const chk = (k, t) => `<label class="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer"><input type="checkbox" class="accent-violet-500" ${P[k] ? 'checked' : ''} onchange="pvSet('${k}',this.checked)">${t}</label>`;
+        const filt = P.filters.map((f, i) => {
+            const vals = {}; base.forEach(l => { const v = pvGet(l, f.key); vals[v] = (vals[v] || 0) + 1; });
+            const keys = Object.keys(vals).sort(pvCmp(f.key)).slice(0, 300), ex = new Set(f.ex || []);
+            return `<details ${pvOpen[i] ? 'open' : ''} ontoggle="pvOpen[${i}]=this.open" class="bg-slate-900 border border-slate-700 rounded-lg"><summary class="px-2.5 py-1.5 text-[11px] text-slate-200 cursor-pointer flex items-center justify-between gap-2"><span><b class="text-violet-300">${escH(pvLabel(f.key))}</b> · ${keys.filter(v => !ex.has(v)).length} of ${keys.length} shown</span><button type="button" onclick="event.preventDefault();event.stopPropagation();pvFilterRemove(${i})" class="text-rose-300 px-1">✕</button></summary><div class="px-2.5 pb-2"><div class="flex gap-1.5 mb-1.5"><button type="button" class="${BTN}" onclick="pvFilterAll(${i},true)">All</button><button type="button" class="${BTN}" onclick="pvFilterAll(${i},false)">None</button></div><div class="max-h-40 overflow-y-auto space-y-0.5">${keys.map(v => `<label class="flex items-center gap-2 text-[11px] text-slate-300 px-1 py-0.5 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-violet-500" data-v="${escH(v)}" ${ex.has(v) ? '' : 'checked'} onchange="pvFilterToggle(${i},this.dataset.v,this.checked)"><span class="truncate">${escH(pvDisp(f.key, v))}</span><span class="ml-auto text-slate-500">${vals[v]}</span></label>`).join('')}</div></div></details>`;
+        }).join('');
+        el.innerHTML = `
+<div class="p-4 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+  <div><h4 class="text-xs font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-table-cells text-violet-400 mr-1.5"></i>Pivot Table — design your own statement</h4>
+  <p class="text-[11px] text-slate-400 mt-0.5">Pick the <b>rows</b>, <b>columns</b> and <b>value</b> from any field of the ticked sheets. The same table goes into the printed / emailed statement.</p></div>
+  <div class="flex flex-wrap gap-x-4 gap-y-1 items-center bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2"><span class="text-[10px] font-bold text-slate-400 uppercase">Statement shows</span>${rad('standard', 'Transaction list')}${rad('pivot', 'Pivot table only')}${rad('both', 'Pivot + transactions')}</div>
+</div>
+<div class="p-4 space-y-3">
+  <div class="flex flex-wrap gap-1.5 items-center"><span class="text-[10px] font-bold text-slate-400 uppercase mr-1">Quick layouts</span>${PRESETS.map((p, i) => `<button type="button" class="${BTN}" onclick="pvPreset(${i})">${escH(p[0])}</button>`).join('')}<button type="button" class="${BTN}" onclick="pvClear()">Clear</button></div>
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+    ${zone('Rows', 'Down the left side — order matters (first = main group)', 'rows', P, fields)}
+    ${zone('Columns', 'Across the top (optional)', 'cols', P, fields)}
+    <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 space-y-2"><div class="text-[10px] font-bold text-violet-300 uppercase tracking-wider">Values</div>
+      <select onchange="pvSet('val',this.value)" class="w-full ${SEL}">${valOpts}</select>
+      <select onchange="pvSet('agg',this.value)" class="w-full ${SEL}">${aggOpts}</select>
+      <div class="flex flex-wrap gap-x-4 gap-y-1">${chk('subtotals', 'Subtotals (2+ row fields)')}${chk('totals', 'Row / column totals')}${chk('landscape', 'Print landscape')}</div></div>
+    <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3"><div class="text-[10px] font-bold text-violet-300 uppercase tracking-wider">Filters</div><div class="text-[10px] text-slate-500 mb-2">Untick the values you want left out</div><div class="space-y-1.5 mb-2">${filt || '<span class="text-[11px] text-slate-600">— none —</span>'}</div>
+      <select onchange="pvFilterAdd(this.value)" class="w-full ${SEL}"><option value="">+ Add filter on…</option>${fields.filter(f => !P.filters.some(x => x.key === f.key)).map(f => `<option value="${escH(f.key)}">${escH(f.label)}</option>`).join('')}</select></div>
+  </div>
+  <div class="flex flex-wrap gap-2 items-center"><span class="text-[10px] font-bold text-slate-400 uppercase">My layouts</span>
+    <input id="pv-layout-name" type="text" placeholder="Name this layout" class="${SEL} w-44"><button type="button" class="${BTN}" onclick="pvSaveLayout()">Save</button>
+    ${layouts.length ? `<select id="pv-layout-pick" class="${SEL}">${layouts.map(n => `<option>${escH(n)}</option>`).join('')}</select><button type="button" class="${BTN}" onclick="pvLoadLayout()">Load</button><button type="button" class="${BTN}" onclick="pvDelLayout()">Delete</button>` : '<span class="text-[11px] text-slate-600">none saved yet</span>'}</div>
+</div>
+<div class="border-t border-slate-800"><div class="px-4 py-2.5 text-[11px] text-slate-400 flex justify-between gap-2 flex-wrap"><span class="text-white font-semibold">${escH(pvTitle())}</span><span>${R.n.toLocaleString()} entries</span></div>
+<div class="overflow-x-auto pb-1">${R.n ? pvTableHtml(R, 'dark') : '<p class="p-4 text-xs text-slate-500">No transactions in this coverage.</p>'}</div></div>`;
+    }
+
+    // ---------------------------------------------------------------- pivot actions
+    const A = {
+        pvSet(k, v) { pvCfg()[k] = v; pvSave(); },
+        pvAdd(z, key) { if (!key) return; const P = pvCfg(); if (!P[z].includes(key)) P[z].push(key); pvSave(); },
+        pvRemove(z, i) { pvCfg()[z].splice(i, 1); pvSave(); },
+        pvMove(z, i, d) { const a = pvCfg()[z], j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; pvSave(); },
+        pvPreset(i) { const P = pvCfg(); P.rows = PRESETS[i][1].rows.slice(); P.cols = PRESETS[i][1].cols.slice(); pvSave(); },
+        pvClear() { const P = pvCfg(); P.rows = []; P.cols = []; P.filters = []; pvSave(); },
+        pvFilterAdd(key) { if (!key) return; const P = pvCfg(); P.filters.push({ key, ex: [] }); pvOpen[P.filters.length - 1] = true; pvSave(); },
+        pvFilterRemove(i) { pvCfg().filters.splice(i, 1); pvSave(); },
+        pvFilterToggle(i, v, on) { const f = pvCfg().filters[i], s = new Set(f.ex || []); on ? s.delete(v) : s.add(v); f.ex = [...s]; pvSave(); },
+        pvFilterAll(i, on) { const f = pvCfg().filters[i]; if (on) f.ex = []; else { const s = new Set(); pvBaseRows().forEach(l => s.add(pvGet(l, f.key))); f.ex = [...s]; } pvSave(); },
+        pvSaveLayout() {
+            const n = ((document.getElementById('pv-layout-name') || {}).value || '').trim(); if (!n) { showToast('Type a name for this layout first.', 'error'); return; }
+            const P = pvCfg(); stmtCfg.pivotLayouts = stmtCfg.pivotLayouts || {};
+            stmtCfg.pivotLayouts[n] = JSON.parse(JSON.stringify({ rows: P.rows, cols: P.cols, val: P.val, agg: P.agg, filters: P.filters, subtotals: P.subtotals, totals: P.totals, landscape: P.landscape }));
+            pvSave(); showToast('Layout “' + n + '” saved', 'success');
+        },
+        pvLoadLayout() { const n = (document.getElementById('pv-layout-pick') || {}).value, L = stmtCfg.pivotLayouts && stmtCfg.pivotLayouts[n]; if (!L) return; Object.assign(pvCfg(), JSON.parse(JSON.stringify(L))); pvSave(); },
+        pvDelLayout() { const n = (document.getElementById('pv-layout-pick') || {}).value; if (n && stmtCfg.pivotLayouts) { delete stmtCfg.pivotLayouts[n]; pvSave(); } }
+    };
+    Object.assign(window, A, { pvOpen });
+
+    const _rs2 = renderStatement;
+    renderStatement = function () { const r = _rs2.apply(this, arguments); try { pvRender(); } catch (e) { console.error('Pivot render', e); } return r; };
+
+    // =================================================================== LEDGER
+    const LD_DB = 'ullswater_stmt_ledger_db', LD_STORE = 'records', LD_SEQ = 'ullswater_stmt_ledger_seq', LD_FB = 'ullswater_stmt_ledger_fb';
+    let ldCache = [], ldDb = null, ldFb = false;
+    const ldReq = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const ldStore = m => ldDb.transaction(LD_STORE, m).objectStore(LD_STORE);
+    function ldOpen() { return new Promise(res => { try { const q = indexedDB.open(LD_DB, 1); q.onupgradeneeded = () => q.result.createObjectStore(LD_STORE, { keyPath: 'ref' }); q.onsuccess = () => { ldDb = q.result; res(true); }; q.onerror = () => res(false); } catch (e) { res(false); } }); }
+    async function ldLoad() {
+        let list = [];
+        if (await ldOpen()) { try { list = await ldReq(ldStore('readonly').getAll()); } catch (e) {} }
+        else { ldFb = true; try { list = JSON.parse(localStorage.getItem(LD_FB)) || []; } catch (e) {} }
+        const have = new Set(ldCache.map(r => r.ref)); list.forEach(r => { if (!have.has(r.ref)) ldCache.push(r); });
+        ldRender();
+    }
+    async function ldPut(rec) {
+        const i = ldCache.findIndex(r => r.ref === rec.ref); if (i >= 0) ldCache[i] = rec; else ldCache.push(rec);
+        if (ldFb) { try { localStorage.setItem(LD_FB, JSON.stringify(ldCache)); } catch (e) { showToast('Ledger storage is full — export a backup, then delete old copies.', 'error'); } }
+        else { try { await ldReq(ldStore('readwrite').put(rec)); } catch (e) { showToast('Could not save the ledger copy: ' + (e && e.message), 'error'); } }
+        ldRender();
+    }
+    async function ldDel(ref) {
+        ldCache = ldCache.filter(r => r.ref !== ref);
+        if (ldFb) { try { localStorage.setItem(LD_FB, JSON.stringify(ldCache)); } catch (e) {} } else { try { await ldReq(ldStore('readwrite').delete(ref)); } catch (e) {} }
+        ldRender();
+    }
+    function ldNextRef() {
+        let n = parseInt(localStorage.getItem(LD_SEQ) || '0', 10) || 0;
+        const mx = ldCache.reduce((m, r) => { const x = parseInt(String(r.ref).split('-').pop(), 10); return isNaN(x) ? m : Math.max(m, x); }, 0);
+        n = Math.max(n, mx) + 1; try { localStorage.setItem(LD_SEQ, String(n)); } catch (e) {}
+        return 'LDG-' + new Date().getFullYear() + '-' + String(n).padStart(5, '0');
+    }
+    const nameOf = u => (users.find(x => x.username === u) || {}).fullname || u;
+    const netOf = S => (S.adj && S.adj.active) ? S.adj.final : S.amt;
+    const ldMake = o => Object.assign({ ts: Date.now(), when: getLocalTimestamp(), reprints: 0, resends: 0, history: [] }, o);
+
+    // ---- page helpers
+    const HISTORY = (r, what) => { r.history = r.history || []; r.history.unshift({ t: getLocalTimestamp(), by: activeUser, what }); if (r.history.length > 60) r.history.length = 60; };
+    function pageWith(html, banner, auto) {
+        let h = html.replace('</head>', () => '<style>.ldg-banner{font:700 9px Arial,sans-serif;color:#475569;border:1px dashed #94a3b8;padding:3px 6px;margin:0 0 6px;text-align:center;letter-spacing:.4px}</style></head>');
+        if (banner) h = h.replace('<body>', () => '<body>' + banner);
+        if (auto) h = h.replace('</body>', () => '<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script></body>');
+        return h;
+    }
+    function openPrint(html) {
+        let w = null; try { w = window.open('', '_blank'); } catch (e) { w = null; }
+        if (w && w.document) { w.document.open(); w.document.write(html); w.document.close(); return; }
+        try {
+            const old = document.getElementById('print-frame'); if (old) old.remove();
+            const f = document.createElement('iframe'); f.id = 'print-frame'; f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;';
+            document.body.appendChild(f); const d = f.contentWindow.document; d.open(); d.write(html.replace(/<script>[\s\S]*?<\/script>/, '')); d.close();
+            setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { window.print(); } }, 600);
+        } catch (e) { showToast('Allow pop-ups for this page, then try again', 'error'); }
+    }
+    function buildPrintPage(S, ref) {
+        const P = pvCfg(), size = (P.layout !== 'standard' && P.landscape) ? 'A4 landscape' : 'A4';
+        const doc = buildStatementDocHtml(S, true).split('System-generated statement ·').join('Ledger Ref ' + ref + ' · System-generated statement ·');
+        return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Statement of Account ${ref}</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>@page{size:${size};margin:10mm}body{margin:0;background:#fff}${STMT_CSS}.soa{padding:0}</style></head><body>${doc}</body></html>`;
+    }
+
+    // ---- PRINT: archive first, then print
+    printStatement = function () {
+        renderStatement(); const S = stmtLastData; if (!S) return;
+        const ref = ldNextRef(), html = buildPrintPage(S, ref);
+        ldPut(ldMake({ ref, action: 'Printed', status: 'Printed', by: activeUser, byName: nameOf(activeUser), to: '', subject: 'Statement of Account – ' + emSheetNames(), from: S.from, toDate: S.to, sheets: emSheetNames(), units: S.chosen.length, tx: S.tx, net: netOf(S), layout: pvLayout(), docHtml: html, cfg: JSON.stringify(stmtCfg) }));
+        openPrint(pageWith(html, '', true));
+        try { logAccess('Printed Statement of Account', `${ref} · ${S.from || 'start'} → ${S.to || 'end'}`); } catch (e) {}
+        showToast('Printed — copy saved to the Statement Ledger as ' + ref, 'success');
+    };
+
+    // ---- EMAIL: stamp the ledger ref, remember the payload, archive the result
+    const _bep = buildEmailPayload;
+    buildEmailPayload = function (S, o) {
+        const P = _bep.call(this, S, o);
+        try {
+            const ref = ldNextRef(), lay = pvLayout(), pv = pvCfg();
+            const stamp = h => String(h).split('System-generated statement ·').join('Ledger Ref ' + ref + ' · System-generated statement ·');
+            P.html = stamp(P.html).replace('Dashboard Summary</h2>', () => 'Dashboard Summary</h2><div style="font-size:11px;color:#64748b;margin-bottom:4px">Ledger Ref: ' + ref + '</div>');
+            P.pdfHtml = stamp(P.pdfHtml);
+            if (lay !== 'standard' && pv.landscape) P.pdfHtml = P.pdfHtml.replace('@page{size:A4;margin:10mm}', '@page{size:A4 landscape;margin:10mm}');
+            P.text = (P.text || '') + '\nLedger Ref: ' + ref;
+            P.meta = { ref, by: activeUser, from: S.from, toDate: S.to, sheets: emSheetNames(), units: S.chosen.length, tx: S.tx, net: netOf(S), layout: lay, cfg: JSON.stringify(stmtCfg) };
+        } catch (e) { console.error(e); }
+        window.__lastEmailP = P; return P;
+    };
+    async function saveFromEmail(P, r, opt) {
+        const m = P.meta; if (!m) return;
+        if (P.id) for (const old of ldCache.filter(x => x.emId === P.id && x.status === 'Failed')) await ldDel(old.ref);
+        const sched = /^EM-.*-\d{4}-\d{2}-\d{2}$/.test(String(P.id || ''));
+        const rec = ldMake({ ref: m.ref, action: (opt && opt.action) || (sched ? 'Scheduled email' : 'Emailed'), status: (opt && opt.status) || (r.ok ? 'Sent' : 'Failed'), error: r.ok ? '' : (r.msg || ''), by: m.by, byName: nameOf(m.by), to: P.to, subject: P.subject, from: m.from, toDate: m.toDate, sheets: m.sheets, units: m.units, tx: m.tx, net: m.net, layout: m.layout, docHtml: P.pdfHtml, emailHtml: P.html, text: P.text, cfg: m.cfg, emId: P.id || '' });
+        await ldPut(rec);
+    }
+    const _pe = postEmail;
+    postEmail = async function (payload) {
+        const meta = payload && payload.meta, clean = meta ? Object.assign({}, payload) : payload; if (meta) delete clean.meta;
+        const r = await _pe.call(this, clean);
+        if (meta) { try { await saveFromEmail(payload, r); } catch (e) { console.error(e); } }
+        return r;
+    };
+    const _mm = emMailApp;
+    emMailApp = function () { _mm.apply(this, arguments); const P = window.__lastEmailP; if (P && P.meta) saveFromEmail(P, { ok: true }, { action: 'Downloaded (mail app)', status: 'Prepared' }); };
+
+    // ---- ledger actions
+    const find = ref => ldCache.find(r => r.ref === ref);
+    const A2 = {
+        ldRender,
+        ldView(ref) {
+            const r = find(ref); if (!r) return; const old = document.getElementById('ldg-view'); if (old) old.remove();
+            const ov = document.createElement('div'); ov.id = 'ldg-view'; ov.className = 'fixed inset-0 z-[200] bg-black/70 flex flex-col';
+            ov.innerHTML = `<div class="flex items-center gap-2 p-3 bg-slate-900 border-b border-slate-700 flex-wrap"><div class="text-sm font-bold text-white">${escH(r.ref)}</div><div class="text-[11px] text-slate-400">${escH(r.action)} · ${escH(r.when)}</div><div class="ml-auto flex gap-2"><button class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg" onclick="ldReprint('${r.ref}')"><i class="fa-solid fa-print mr-1"></i>Reprint</button><button class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg" onclick="ldDownload('${r.ref}')">Download</button><button class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg" onclick="document.getElementById('ldg-view').remove()">Close</button></div></div><iframe class="flex-1 w-full bg-white"></iframe>`;
+            document.body.appendChild(ov); ov.querySelector('iframe').srcdoc = r.docHtml;
+            try { logAccess('Viewed ledger copy', r.ref, true); } catch (e) {}
+        },
+        ldReprint(ref) {
+            const r = find(ref); if (!r) return; r.reprints = (r.reprints || 0) + 1; HISTORY(r, 'Reprinted (#' + r.reprints + ')'); ldPut(r);
+            const banner = `<div class="ldg-banner">LEDGER COPY · ${escH(r.ref)} · REPRINT #${r.reprints} · originally ${escH(r.action.toLowerCase())} ${escH(r.when)} by ${escH(r.byName || r.by)} · reprinted ${escH(getLocalTimestamp())} by ${escH(nameOf(activeUser))}</div>`;
+            openPrint(pageWith(r.docHtml, banner, true));
+            try { logAccess('Reprinted ledger copy', r.ref); } catch (e) {}
+        },
+        ldDownload(ref) {
+            const r = find(ref); if (!r) return;
+            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([r.docHtml], { type: 'text/html' })); a.download = r.ref + '.html';
+            document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+        },
+        async ldResend(ref) {
+            const r = find(ref); if (!r || !r.emailHtml) return;
+            const to = prompt('Resend this statement to (separate several with commas):', r.to || ''); if (!to) return;
+            const list = emParse(to); if (!list.length || list.some(a => !emValid(a))) { showToast('Enter valid email address(es).', 'error'); return; }
+            showToast('Resending… waiting for Google to confirm', 'success');
+            const res = await postEmail({ to: list.join(','), subject: r.subject, html: r.emailHtml, pdfHtml: r.docHtml, fileName: 'Statement_' + r.ref + '.pdf', text: r.text || r.subject });
+            HISTORY(r, (res.ok ? 'Resent to ' : 'Resend FAILED to ') + list.join(', ')); if (res.ok) { r.resends = (r.resends || 0) + 1; r.status = 'Sent'; r.error = ''; }
+            ldPut(r); showToast(res.ok ? 'Resent to ' + list.join(', ') : 'Resend failed: ' + res.msg, res.ok ? 'success' : 'error');
+            try { logAccess(res.ok ? 'Resent ledger copy' : 'Resend of ledger copy FAILED', r.ref + ' → ' + list.join(', ')); } catch (e) {}
+        },
+        ldLoadSetup(ref) {
+            const r = find(ref); if (!r || !r.cfg) return;
+            try {
+                const c = JSON.parse(r.cfg); localStorage.setItem(STMT_KEY, JSON.stringify(c));
+                loadStmtCfg(); unitSel.stmt = [];
+                document.getElementById('stmt-from').value = r.from || ''; document.getElementById('stmt-to').value = r.toDate || '';
+                initStatementTab(); renderStatement(); saveStmtCfg();
+                showToast('Setup of ' + r.ref + ' loaded — sheets, pivot, mapping and period restored', 'success');
+                window.scrollTo(0, 0);
+            } catch (e) { showToast('Could not load that setup', 'error'); }
+        },
+        ldDelete(ref) {
+            if (activeUserRole !== 'Administrator') { showToast('Only an Administrator can delete ledger copies.', 'error'); return; }
+            if (!confirm('Delete ledger copy ' + ref + ' permanently? It can no longer be reprinted.')) return;
+            ldDel(ref); try { logAccess('Deleted ledger copy', ref); } catch (e) {}
+        },
+        ldExport() {
+            const list = visible(); if (!list.length) { showToast('Nothing to export yet.', 'error'); return; }
+            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ app: 'ullswater-stmt-ledger', v: 1, exported: getLocalTimestamp(), records: list }, null, 0)], { type: 'application/json' }));
+            a.download = 'Statement_Ledger_' + isoDate(new Date()) + '.json'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+        },
+        ldImport(inp) {
+            const f = inp.files && inp.files[0]; if (!f) return; const fr = new FileReader();
+            fr.onload = async () => {
+                try {
+                    const j = JSON.parse(fr.result); const recs = (j && j.records) || []; let n = 0;
+                    for (const r of recs) { if (r && r.ref && r.docHtml && !find(r.ref)) { await ldPut(r); n++; } }
+                    const mx = ldCache.reduce((m, r) => { const x = parseInt(String(r.ref).split('-').pop(), 10); return isNaN(x) ? m : Math.max(m, x); }, 0);
+                    if (mx > (parseInt(localStorage.getItem(LD_SEQ) || '0', 10) || 0)) localStorage.setItem(LD_SEQ, String(mx));
+                    showToast(n + ' ledger copies imported (' + (recs.length - n) + ' already existed).', 'success');
+                } catch (e) { showToast('That file is not a valid ledger backup.', 'error'); }
+                inp.value = '';
+            };
+            fr.readAsText(f);
+        }
+    };
+    Object.assign(window, A2);
+
+    // ---- ledger card
+    const visible = () => ldCache.filter(r => activeUserRole === 'Administrator' || r.by === activeUser).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    function mountLedger() {
+        if (document.getElementById('stmt-ledger-card')) return;
+        const em = document.getElementById('stmt-email-panel'); if (!em) return;
+        const d = document.createElement('div'); d.id = 'stmt-ledger-card'; d.className = 'bg-slate-900 border border-sky-700/40 rounded-2xl overflow-hidden';
+        d.innerHTML = `<div class="p-4 border-b border-slate-800 flex items-start justify-between gap-3 flex-wrap">
+  <div><h4 class="text-xs font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-book text-sky-400 mr-1.5"></i>Statement Ledger — copies of every printed &amp; emailed statement</h4>
+  <p class="text-[11px] text-slate-400 mt-1 max-w-3xl">Each time you print or email a statement, an exact copy is filed here with a Ledger Ref (also printed in the statement footer). Open, reprint, resend or reload its setup any time. Failed emails are filed too, so nothing is lost. <span class="text-amber-300">Copies are stored in this browser — press Export Backup regularly.</span></p></div>
+  <div class="flex gap-2 flex-wrap"><button type="button" onclick="ldExport()" class="${BTN}"><i class="fa-solid fa-download mr-1"></i>Export Backup</button><label class="${BTN} cursor-pointer"><i class="fa-solid fa-upload mr-1"></i>Import<input type="file" accept=".json,application/json" class="hidden" onchange="ldImport(this)"></label></div></div>
+<div class="p-3 flex gap-2 flex-wrap border-b border-slate-800"><input id="ldg-q" oninput="ldRender()" type="text" placeholder="Search ref, recipient, sheet, user…" class="${SEL} flex-1 min-w-[200px]"><select id="ldg-act" onchange="ldRender()" class="${SEL}"><option value="">All actions</option><option value="Printed">Printed</option><option value="email">Emailed / scheduled</option><option value="Failed">Failed</option></select><span id="ldg-count" class="text-[11px] text-slate-400 self-center"></span></div>
+<div class="overflow-x-auto"><table class="w-full text-left text-xs text-slate-300"><thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr><th class="p-3">Ledger Ref</th><th class="p-3">Date / Time</th><th class="p-3">Action</th><th class="p-3">By</th><th class="p-3">Sent to</th><th class="p-3">Period</th><th class="p-3">Sheets</th><th class="p-3 text-right">Net Amount</th><th class="p-3 text-right">Actions</th></tr></thead><tbody id="ldg-body" class="divide-y divide-slate-800/60"></tbody></table></div>`;
+        em.insertAdjacentElement('afterend', d);
+    }
+    function ldRender() {
+        const body = document.getElementById('ldg-body'); if (!body) return;
+        const q = ((document.getElementById('ldg-q') || {}).value || '').toLowerCase().trim(), act = (document.getElementById('ldg-act') || {}).value || '';
+        let list = visible(); const total = list.length;
+        if (act === 'Printed') list = list.filter(r => r.action === 'Printed'); else if (act === 'email') list = list.filter(r => r.action !== 'Printed' && r.status !== 'Failed'); else if (act === 'Failed') list = list.filter(r => r.status === 'Failed');
+        if (q) list = list.filter(r => [r.ref, r.to, r.sheets, r.byName, r.by, r.subject, r.action, r.status].join(' ').toLowerCase().includes(q));
+        const shown = list.slice(0, 150);
+        const ico = 'px-1.5 py-1 rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-[11px]';
+        body.innerHTML = shown.length ? shown.map(r => {
+            const st = r.status === 'Failed' ? 'text-rose-300' : r.status === 'Prepared' ? 'text-amber-300' : 'text-emerald-300';
+            return `<tr class="hover:bg-slate-800/40"><td class="p-3 font-mono text-sky-300 whitespace-nowrap">${escH(r.ref)}</td><td class="p-3 whitespace-nowrap text-slate-400">${escH(r.when)}</td><td class="p-3 whitespace-nowrap"><span class="${st} font-semibold">${escH(r.action)}</span>${r.status === 'Failed' ? `<div class="text-[10px] text-rose-400 max-w-[200px] truncate" title="${escH(r.error)}">${escH(r.error)}</div>` : ''}${r.reprints || r.resends ? `<div class="text-[10px] text-slate-500">${r.reprints ? r.reprints + ' reprint' + (r.reprints > 1 ? 's' : '') : ''} ${r.resends ? r.resends + ' resend' + (r.resends > 1 ? 's' : '') : ''}</div>` : ''}</td><td class="p-3 whitespace-nowrap">${escH(r.byName || r.by)}</td><td class="p-3 max-w-[180px] truncate" title="${escH(r.to)}">${escH(r.to) || '—'}</td><td class="p-3 whitespace-nowrap text-slate-400">${r.from ? escH(fmtDate(r.from)) : 'Start'} – ${r.toDate ? escH(fmtDate(r.toDate)) : 'Latest'}</td><td class="p-3 max-w-[160px] truncate" title="${escH(r.sheets)}">${escH(r.sheets)}</td><td class="p-3 text-right font-mono whitespace-nowrap">${fmtNet(r.net)}</td><td class="p-3 text-right whitespace-nowrap"><button class="${ico}" title="View" onclick="ldView('${r.ref}')"><i class="fa-solid fa-eye"></i></button> <button class="${ico} text-emerald-300" title="Reprint" onclick="ldReprint('${r.ref}')"><i class="fa-solid fa-print"></i></button>${r.emailHtml ? ` <button class="${ico} text-blue-300" title="Resend by email" onclick="ldResend('${r.ref}')"><i class="fa-solid fa-paper-plane"></i></button>` : ''} <button class="${ico}" title="Load this setup back into the dashboard" onclick="ldLoadSetup('${r.ref}')"><i class="fa-solid fa-rotate-left"></i></button> <button class="${ico}" title="Download HTML" onclick="ldDownload('${r.ref}')"><i class="fa-solid fa-file-arrow-down"></i></button>${activeUserRole === 'Administrator' ? ` <button class="${ico} text-rose-300" title="Delete" onclick="ldDelete('${r.ref}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td></tr>`;
+        }).join('') : `<tr><td colspan="9" class="p-6 text-center text-slate-500">${total ? 'No ledger copies match your search.' : 'No copies yet — print or email a statement and it will be filed here automatically.'}</td></tr>`;
+        const c = document.getElementById('ldg-count'); if (c) c.textContent = total ? `${shown.length} of ${list.length} shown (${total} total)` : '';
+    }
+
+    const _swL = switchTab; switchTab = function (t) { const r = _swL.apply(this, arguments); if (t === 'statement') { mountPivotCard(); mountLedger(); ldRender(); try { pvRender(); } catch (e) {} } return r; };
+
+    // =================================================================== PER-SHEET TRANSACTION DETAILS + CONFIG TABS
+    const fieldKeys = ['unitField', 'amountField', 'typeField', 'dateField', 'refField', 'qtyField', 'rateField'];
+    const numOrRaw2 = v => { if (v == null || v === '') return ''; const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? escH(v) : fmtMoney(n); };
+    function colsFor(m, forPrint) {
+        const descF = (m.desc || []).filter(Boolean), subF = (m.sub || []).filter(Boolean), cols = [];
+        cols.push({ h: m.dateField || 'Date', w: 11, al: 'c', cell: l => fmtDate(getLogDate(l)) });
+        if (m.refField) cols.push({ h: m.refField, w: 15, al: 'l', cell: l => `<span class="strong">${escH((l.data || {})[m.refField] || '')}</span><div class="sub">${escH(l.id)}</div>` });
+        if (descF.length || subF.length) cols.push({ h: descF.join(' / ') || subF.join(' → '), w: 0, al: 'l', cell: l => {
+            const d = l.data || {}, main = (m.desc || []).filter(Boolean).map(k => d[k]).filter(v => v != null && v !== '').join(' – '), sub = (m.sub || []).filter(Boolean).map(k => d[k]).filter(v => v != null && v !== '').join(' → ');
+            return `${escH(main)}${sub ? `<div class="sub">${escH(sub)}</div>` : ''}`; } });
+        if (m.qtyField) cols.push({ h: m.qtyField, w: 9, al: 'r', cell: l => escH((l.data || {})[m.qtyField] || '') });
+        if (m.rateField) cols.push({ h: m.rateField, w: 11, al: 'r', cell: l => numOrRaw2((l.data || {})[m.rateField]) });
+        cols.push({ h: 'Add / Deduct', w: forPrint ? 11 : 16, al: 'c', cell: l => {
+            const md = getLogMode(l);
+            if (forPrint) return md === 'ded' ? '<span style="color:#b91c1c;font-weight:700">Deduction</span>' : '<span style="color:#047857;font-weight:700">Additional</span>';
+            const idq = escH(String(l.id)).replace(/'/g, "\\'");
+            return `<select onchange="setLogMode('${idq}', this.value)" style="font-size:10px;padding:2px 3px;border:1px solid #9aa8ba;border-radius:4px;background:${md === 'ded' ? '#fee2e2' : '#d1fae5'};color:#111"><option value="add" ${md === 'add' ? 'selected' : ''}>+ Additional</option><option value="ded" ${md === 'ded' ? 'selected' : ''}>− Deduction</option></select>`; } });
+        cols.push({ h: m.amountField || 'Amount', w: 14, al: 'r', cell: l => { const a = getLogAmount(l); return getLogMode(l) === 'ded' ? `<span class="strong" style="color:#b91c1c">(${fmtMoney(a)})</span>` : `<span class="strong">${fmtMoney(a)}</span>`; } });
+        return cols;
+    }
+    const money = n => n < 0 ? '(' + fmtMoney(-n) + ')' : fmtMoney(n);
+    function sheetsInStatement(S) { const s = new Set(); S.chosen.forEach(u => u.rows.forEach(l => s.add(l.formId))); return [...s]; }
+    function multiDetail(S, forPrint) {
+        const bySheet = new Map();
+        S.chosen.forEach(u => u.rows.forEach(l => { if (!bySheet.has(l.formId)) bySheet.set(l.formId, new Map()); const um = bySheet.get(l.formId); if (!um.has(u.unit)) um.set(u.unit, []); um.get(u.unit).push(l); }));
+        const order = getSheetIds(), ids = [...bySheet.keys()].sort((a, b) => { const x = order.indexOf(a), y = order.indexOf(b); return (x < 0 ? 99 : x) - (y < 0 ? 99 : y); });
+        let html = '', sheetNo = 0;
+        ids.forEach(id => {
+            const um = bySheet.get(id), sample = [...um.values()][0][0], form = forms.find(f => f.id === id), name = (form && form.name) || sample.formName || 'Sheet';
+            const m = M(sample), cols = colsFor(m, forPrint), nC = cols.length, unitL = m.unitField || 'Asset Unit';
+            let sheetTotal = 0, sheetTx = 0;
+            const units = [...um.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+            const body = units.map(([unit, rows]) => {
+                const sub = rows.reduce((t, l) => t + getLogSigned(l), 0); sheetTotal += sub; sheetTx += rows.length;
+                return `<tr class="grp"><td colspan="${nC}">${escH(unitL)}: ${escH(unit)}</td></tr>${rows.map(l => `<tr>${cols.map(k => `<td class="a-${k.al}">${k.cell(l)}</td>`).join('')}</tr>`).join('')}<tr class="subtot"><td colspan="${nC - 1}" class="a-r">Net Subtotal – ${escH(unit)} (${rows.length} transaction${rows.length === 1 ? '' : 's'})</td><td class="a-r">${money(sub)}</td></tr>`;
+            }).join('');
+            html += `<div class="sec">Transaction Details – ${escH(name)}</div><table class="grid detail"><colgroup>${cols.map(k => k.w ? `<col style="width:${k.w}%">` : '<col>').join('')}</colgroup><thead><tr>${cols.map(k => `<th class="a-${k.al}">${escH(k.h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="${nC - 1}" class="a-r">SHEET TOTAL – ${escH(name)} (${sheetTx})</td><td class="a-r">${money(sheetTotal)}</td></tr></tfoot></table>`;
+            sheetNo++;
+        });
+        html += `<table class="grid detail" style="margin-top:8px"><colgroup><col><col style="width:22%"></colgroup><tfoot><tr><td class="a-r">${S.nDed ? 'NET GRAND TOTAL' : 'GRAND TOTAL'} – ALL SHEETS</td><td class="a-r">${money(S.amt)}</td></tr></tfoot></table>`;
+        return html;
+    }
+    const _bsd2 = buildStatementDocHtml;
+    buildStatementDocHtml = function (S, forPrint) {
+        let h = _bsd2.call(this, S, forPrint);
+        try { if (pvLayout() !== 'pivot' && sheetsInStatement(S).length > 1) h = h.replace(/<!--TXD-->[\s\S]*?<!--\/TXD-->/, () => '<!--TXD-->' + multiDetail(S, forPrint) + '<!--/TXD-->'); } catch (e) { console.error('multiDetail', e); }
+        return h;
+    };
+
+    // ---- per-sheet configuration tabs (Core, Report columns, Description, Detail line)
+    let tabsOpened = false;
+    function curMapSheet() { const s = document.querySelector('#stmt-map-bar select'); return s ? s.value : ''; }
+    function mapTabs() {
+        const first = document.getElementById('stmt-unit-field'); if (!first) return;
+        const cont = first.closest('.space-y-2'); if (!cont) return;
+        let host = document.getElementById('stmt-map-tabs'); if (!host) { host = document.createElement('div'); host.id = 'stmt-map-tabs'; cont.prepend(host); }
+        if (!document.getElementById('stmt-map-hide')) { const st = document.createElement('style'); st.id = 'stmt-map-hide'; st.textContent = '#stmt-map-bar{display:none!important}'; document.head.appendChild(st); }
+        const ids = getSheetIds().filter(i => forms.some(f => f.id === i));
+        if (ids.length < 2) { host.className = 'hidden'; host.innerHTML = ''; tabsOpened = false; return; }
+        const det = first.closest('details'); if (det && !tabsOpened) { det.open = true; tabsOpened = true; }
+        const cur = curMapSheet(), nm = id => (forms.find(f => f.id === id) || {}).name || id;
+        const tab = (id, label) => `<button type="button" onclick="rtMapSheetChange('${escH(id)}')" class="text-[10px] font-semibold px-2.5 py-1 rounded-lg border ${id === cur ? 'bg-blue-600 border-blue-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'}">${escH(label)}</button>`;
+        const m = M({ formId: cur || ids[0] }), cols = colsFor(m, true).map(c => c.h);
+        const others = ids.filter(i => i !== cur);
+        host.className = 'bg-blue-950/40 border border-blue-800/60 rounded-lg p-2.5 space-y-2';
+        host.innerHTML = `<div class="text-[10px] font-bold text-blue-300 uppercase">Configure fields for</div>
+<div class="flex flex-wrap gap-1.5">${tab('', 'All sheets (shared default)')}${ids.map(i => tab(i, nm(i))).join('')}</div>
+<p class="text-[10px] text-slate-400">${cur ? `Now editing <b class="text-white">${escH(nm(cur))}</b> only — its Core fields, Report columns, Description and Detail line below apply to this sheet alone and become its own table in Transaction Details.` : 'Shared default for every sheet that has no own setting. Pick a sheet above to give it its own columns.'}</p>
+<div class="text-[10px] text-slate-500">Columns in the statement for ${cur ? escH(nm(cur)) : 'the default'}: <span class="text-emerald-300">${cols.map(escH).join(' | ')}</span></div>
+${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class="flex-1 bg-slate-950 border border-slate-700 text-white text-[10px] rounded-lg px-2 py-1.5"><option value="__shared">Copy setup from: shared default</option>${others.map(i => `<option value="${escH(i)}">Copy setup from: ${escH(nm(i))}</option>`).join('')}</select><button type="button" onclick="mapCopyFrom()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700">Copy</button></div>` : ''}`;
+    }
+    window.mapCopyFrom = function () {
+        const cur = curMapSheet(), src = (document.getElementById('map-copy-src') || {}).value; if (!cur || !src) return;
+        const t = forms.find(f => f.id === cur); if (!t) return; const has = l => (t.fields || []).some(x => x.label === l);
+        const from = src === '__shared' ? stmtCfg : Object.assign({}, stmtCfg, (stmtCfg.maps || {})[src] || {});
+        const m = {}; fieldKeys.forEach(k => { if (has(from[k])) m[k] = from[k]; else if (!['unitField', 'amountField'].includes(k)) m[k] = ''; });
+        m.desc = (from.desc || []).map(x => has(x) ? x : ''); m.sub = (from.sub || []).map(x => has(x) ? x : '');
+        if (from.incomeWords) m.incomeWords = from.incomeWords; if (from.costWords) m.costWords = from.costWords;
+        stmtCfg.maps = stmtCfg.maps || {}; stmtCfg.maps[cur] = m; saveStmtCfg(); initStatementTab(); showToast('Setup copied — fields that do not exist in this sheet were left blank.', 'success');
+    };
+    function syncSheetSelects() {   // show the sheet's real (auto-detected or saved) mapping instead of the first option in each list
+        const cur = curMapSheet(); if (!cur) return; const m = M({ formId: cur }), set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+        set('stmt-unit-field', m.unitField); set('stmt-amount-field', m.amountField); set('stmt-date-field', m.dateField); set('stmt-ref-field', m.refField); set('stmt-qty-field', m.qtyField); set('stmt-rate-field', m.rateField); set('stmt-type-field', m.typeField);
+        [0, 1, 2].forEach(i => set('stmt-desc' + (i + 1) + '-field', (m.desc || [])[i])); [0, 1].forEach(i => set('stmt-sub' + (i + 1) + '-field', (m.sub || [])[i]));
+    }
+    const _init3 = initStatementTab; initStatementTab = function () { const r = _init3.apply(this, arguments); try { syncSheetSelects(); mapTabs(); } catch (e) { console.error(e); } return r; };
+
+    mountPivotCard(); mountLedger(); ldLoad();
+})();
+</script>
 </body>
 </html>
