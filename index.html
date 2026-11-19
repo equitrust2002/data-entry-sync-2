@@ -3230,7 +3230,7 @@ function doGet(e) {
                 el.innerHTML = `<button type="button" onclick="toggleSheetMs('${kind}')" class="${compact ? 'text-xs px-2.5 py-1.5 min-w-[150px] max-w-[220px]' : 'text-sm px-2.5 py-2 w-full'} bg-slate-950 border border-slate-700 text-white rounded-lg flex items-center justify-between gap-2"><span class="truncate">${escH(label)}</span><i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i></button>
                     <div class="${sheetMsOpen[kind] ? '' : 'hidden'} absolute z-30 mt-1 ${compact ? 'w-64' : 'w-full'} bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 space-y-1.5">
                         <div class="flex gap-1.5 items-center"><button type="button" onclick="sheetMsClear()" class="${BT}">All sheets</button><span class="text-[10px] text-slate-500 ml-auto">${sel.length} selected</span></div>
-                        <div class="ms-list max-h-56 overflow-y-auto space-y-0.5">${getUserPermittedForms().map(f => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" ${sel.includes(f.id) ? 'checked' : ''} onchange="sheetMsToggle('${escH(f.id)}', this.checked)"><span class="truncate">${escH(f.name)}${f.gsTab ? ' <span class="text-[9px] font-bold text-emerald-400">GOOGLE TAB</span>' : ''}</span><span class="ml-auto text-slate-500 font-mono">${logs.filter(l => l.formId === f.id).length}</span></label>`).join('')}</div>
+                        <div class="ms-list max-h-64 overflow-y-auto space-y-0.5">${getUserPermittedForms().map(f => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" ${sel.includes(f.id) ? 'checked' : ''} onchange="sheetMsToggle('${escH(f.id)}', this.checked)"><span class="truncate">${escH(f.name)}${f.gsTab ? ' <span class="text-[9px] font-bold text-emerald-400">GOOGLE TAB</span>' : ''}</span><span class="ml-auto text-slate-500 font-mono">${logs.filter(l => l.formId === f.id).length}</span></label>`).join('')}</div>
                     </div>`;
                 const nl = el.querySelector('.ms-list'); if (nl) nl.scrollTop = st;
             });
@@ -4409,7 +4409,7 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
             el.innerHTML = `<button type="button" onclick="toggleUnitMs('${kind}')" class="${compact ? 'text-xs px-2.5 py-1.5 min-w-[150px]' : 'text-sm px-2.5 py-2 w-full'} bg-slate-950 border border-slate-700 text-white rounded-lg flex items-center justify-between gap-2"><span class="truncate">${escH(label)}</span><i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i></button>
                 <div class="${unitMsOpen[kind] ? '' : 'hidden'} absolute z-30 mt-1 ${compact ? 'w-64' : 'w-full'} bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 space-y-1.5">
                     <div class="flex gap-1.5"><button type="button" onclick="unitMsAll('${kind}')" class="${BT}">Select all</button><button type="button" onclick="unitMsClear('${kind}')" class="${BT}">Clear</button><span class="text-[10px] text-slate-500 ml-auto self-center">${sel.length} selected</span></div>
-                    <div class="ms-list max-h-56 overflow-y-auto space-y-0.5">${units.length ? units.map(u => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" data-u="${escH(u)}" ${sel.includes(u) ? 'checked' : ''} onchange="unitMsToggle('${kind}',this.dataset.u,this.checked)"><span class="truncate">${escH(prefix + u)}</span></label>`).join('') : '<p class="text-xs text-slate-500 px-1.5 py-1">No units found.</p>'}</div>
+                    <div class="ms-list max-h-64 overflow-y-auto space-y-0.5">${units.length ? units.map(u => `<label class="flex items-center gap-2 text-xs text-slate-200 px-1.5 py-1 rounded hover:bg-slate-800 cursor-pointer"><input type="checkbox" class="accent-blue-600" data-u="${escH(u)}" ${sel.includes(u) ? 'checked' : ''} onchange="unitMsToggle('${kind}',this.dataset.u,this.checked)"><span class="truncate">${escH(prefix + u)}</span></label>`).join('') : '<p class="text-xs text-slate-500 px-1.5 py-1">No units found.</p>'}</div>
                 </div>`;
             const nl = el.querySelector('.ms-list'); if (nl) nl.scrollTop = st;
             el._units = units;
@@ -6423,19 +6423,27 @@ ${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class=
         if (pmImgs[ref]) return pmImgs[ref];
         const rec = find(ref); if (!rec) return null;
         try {
-            const landscape = /size:A4 landscape/.test(rec.docHtml), W = landscape ? 1123 : 794, MAXH = landscape ? 794 : 1300;
+            const landscape = /size:A4 landscape/.test(rec.docHtml), W = landscape ? 1123 : 794;
             const fr = document.createElement('iframe'); fr.style.cssText = `position:fixed;left:-99999px;top:0;width:${W}px;height:600px;border:0`; document.body.appendChild(fr);
             await new Promise(res => { fr.onload = res; fr.srcdoc = rec.docHtml; });
-            const H = Math.min(MAXH, Math.max(300, fr.contentDocument.documentElement.scrollHeight)); fr.remove();
+            const H = Math.max(300, Math.ceil(fr.contentDocument.documentElement.scrollHeight)); fr.remove();
             const doc = new DOMParser().parseFromString(rec.docHtml, 'text/html');
-            const css = [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n').replace(/@page\s*\{[^}]*\}/g, '');
+            const css = [...doc.querySelectorAll('style')].map(x => x.textContent).join('\n').replace(/@page\s*\{[^}]*\}/g, '');
             doc.body.querySelectorAll('script,select,button').forEach(n => n.remove());
             const inner = [...doc.body.childNodes].map(n => new XMLSerializer().serializeToString(n)).join('');
-            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject x="0" y="0" width="${W}" height="${H}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;overflow:hidden;background:#fff;font-family:Arial,Helvetica,sans-serif"><style>/*<![CDATA[*/${css}/*]]>*/</style>${inner}</div></foreignObject></svg>`;
-            const img = new Image(); await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
-            const cv = document.createElement('canvas'); cv.width = W * 2; cv.height = H * 2; const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.scale(2, 2); cx.drawImage(img, 0, 0);
-            const blob = await new Promise(res => cv.toBlob(res, 'image/png')); if (!blob) return null;
-            return (pmImgs[ref] = { blob, url: URL.createObjectURL(blob) });
+            const MAXPX = 15000;                                   // browsers cannot draw a canvas taller than ~16000px
+            const scale = Math.min(2, MAXPX / H);
+            const single = scale >= 1, chunk = single ? H : 12000, scl = single ? scale : 1, parts = [];
+            for (let off = 0; off < H; off += chunk) {
+                const h = Math.min(chunk, H - off);
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${h}"><foreignObject x="0" y="0" width="${W}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${h}px;overflow:hidden;background:#fff;font-family:Arial,Helvetica,sans-serif"><div style="position:relative;top:-${off}px;width:${W}px"><style>/*<![CDATA[*/${css}/*]]>*/</style>${inner}</div></div></foreignObject></svg>`;
+                const img = new Image(); await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+                const cv = document.createElement('canvas'); cv.width = Math.round(W * scl); cv.height = Math.round(h * scl); const cx = cv.getContext('2d');
+                cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.scale(scl, scl); cx.drawImage(img, 0, 0);
+                const blob = await new Promise(res => cv.toBlob(res, 'image/png')); if (!blob) return null;
+                parts.push({ blob, url: URL.createObjectURL(blob) });
+            }
+            return (pmImgs[ref] = { parts, blob: parts[0].blob, url: parts[0].url, pages: Math.max(1, Math.round(H / (landscape ? 794 : 1123))) });
         } catch (e) { console.warn('Statement picture failed', e); return null; }
     }
     const pmBtn = 'bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700';
@@ -6446,22 +6454,22 @@ ${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class=
             const ov = document.createElement('div'); ov.id = 'pm-modal'; ov.className = 'fixed inset-0 z-[210] bg-black/70 flex items-center justify-center p-3';
             const items = pPending.map((it, k) => `<div class="bg-slate-950 border border-slate-700 rounded-xl p-3 space-y-2.5">
 <div><div class="text-xs font-bold text-white">${escH(it.title)}</div><div class="text-[10px] text-slate-400">Ledger ${escH(it.ref)} · prepared ${escH(it.when)}</div></div>
-<div class="text-[11px] text-amber-200 bg-amber-950/30 border border-amber-800/50 rounded-lg p-2.5 leading-relaxed"><b>${IS_MOBILE ? 'On your phone:' : 'On your computer:'}</b> ${IS_MOBILE ? '1) tap <b>Share to Messenger</b> beside the person, 2) choose Messenger → the person → Send.' : '1) tap <b>Open chat</b> beside the person (the statement picture is copied automatically), 2) click the message box in the chat, 3) press <b>Ctrl+V</b> and <b>Enter</b>.'}</div>
-<div id="pm-prev-${k}" class="bg-slate-900 border border-slate-800 rounded-lg p-2 text-center text-[11px] text-slate-500 max-h-56 overflow-y-auto"><i class="fa-solid fa-spinner fa-spin"></i> Preparing the statement picture…</div>
-<div class="flex flex-wrap gap-1.5"><button type="button" class="${pmBtn}" onclick="pmCopyPic(${k})"><i class="fa-solid fa-image mr-1"></i>Copy picture</button><button type="button" class="${pmBtn}" onclick="pmCopy(${k})"><i class="fa-solid fa-copy mr-1"></i>Copy text summary</button><button type="button" class="${pmBtn}" onclick="ldReprint('${escH(it.ref)}')"><i class="fa-solid fa-file-pdf mr-1"></i>Save as PDF / Print</button><button type="button" class="${pmBtn}" onclick="ldDownload('${escH(it.ref)}')"><i class="fa-solid fa-download mr-1"></i>Download file</button></div>
+<div class="text-[11px] text-amber-200 bg-amber-950/30 border border-amber-800/50 rounded-lg p-2.5 leading-relaxed"><b>${IS_MOBILE ? 'On your phone:' : 'On your computer:'}</b> ${IS_MOBILE ? '1) tap <b>Share to Messenger</b> beside the person, 2) choose Messenger → the person → Send.' : '1) tap <b>Open chat</b> beside the person (the whole-statement picture is copied automatically), 2) click the message box in the chat, 3) press <b>Ctrl+V</b> and <b>Enter</b>.'}</div>
+<div id="pm-prev-${k}" class="bg-slate-900 border border-slate-800 rounded-lg p-2 text-center text-[11px] text-slate-500 max-h-64 overflow-y-auto"><i class="fa-solid fa-spinner fa-spin"></i> Preparing the statement picture…</div>
+<div class="flex flex-wrap gap-1.5"><button type="button" class="${pmBtn}" onclick="pmCopyPic(${k})"><i class="fa-solid fa-image mr-1"></i>Copy whole-statement picture</button><span id="pm-parts-${k}" class="contents"></span><button type="button" class="${pmBtn}" onclick="pmCopy(${k})"><i class="fa-solid fa-copy mr-1"></i>Copy text summary</button><button type="button" class="${pmBtn}" onclick="ldReprint('${escH(it.ref)}')"><i class="fa-solid fa-file-pdf mr-1"></i>Save as PDF / Print</button><button type="button" class="${pmBtn}" onclick="ldDownload('${escH(it.ref)}')"><i class="fa-solid fa-download mr-1"></i>Download file</button></div>
 <div class="space-y-1.5">${it.contacts.map((c, i) => `<div class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-2"><div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-200"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>${escH(c.name || c.id)}</span><button type="button" onclick="pmGo(${k},${i})" class="${it.done.includes(i) ? 'bg-emerald-700' : 'bg-blue-600 hover:bg-blue-500'} text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">${IS_MOBILE ? 'Share to Messenger' : 'Open chat'}${it.done.includes(i) ? ' ✓' : ''}</button></div><div class="text-[10px] text-slate-500 mt-1">Chat not opening? Try: <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'messenger')}">Messenger.com</a> · <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'facebook')}">Facebook</a> · <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'mme')}">m.me</a> — or just open Messenger and search “${escH(c.name || c.id)}”.</div></div>`).join('')}</div>
 <div class="flex gap-3 justify-end"><button type="button" onclick="pmFinish(${k})" class="text-[11px] text-emerald-300 hover:text-emerald-200 font-semibold">I sent it — mark as sent</button><button type="button" onclick="pmDiscard(${k})" class="text-[11px] text-rose-300 hover:text-rose-200 font-semibold">Discard</button></div></div>`).join('');
             ov.innerHTML = `<div class="bg-slate-900 border border-blue-500/50 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto"><div class="p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-900"><div class="text-sm font-bold text-white"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>Statement ready — send on Messenger</div><button type="button" onclick="document.getElementById('pm-modal').remove()" class="text-slate-400 hover:text-white text-xs font-semibold">Later</button></div><div class="p-4 space-y-3">${items}</div></div>`;
             document.body.appendChild(ov);
             pPending.forEach(async (it, k) => {
-                const im = await pmMakeImage(it.ref), box = mq('pm-prev-' + k); if (!box) return;
-                box.innerHTML = im ? `<img src="${im.url}" alt="Statement" class="w-full rounded border border-slate-700 bg-white"><div class="text-[10px] text-slate-500 mt-1">Page 1 of the statement. Computer: right-click → Copy image. Phone: press and hold → Save image. Use <b>Save as PDF</b> to send every page.</div>` : '<span class="text-amber-300">A picture could not be made in this browser — use <b>Copy text summary</b> or <b>Save as PDF</b>.</span>';
+                const im = await pmMakeImage(it.ref), box = mq('pm-prev-' + k); if (!box) return; const pb = mq('pm-parts-' + k); if (pb && im && im.parts.length > 1) pb.innerHTML = im.parts.map((_, n) => `<button type="button" class="${pmBtn}" onclick="pmCopyPic(${k},${n})">Copy part ${n + 1}/${im.parts.length}</button>`).join('');
+                box.innerHTML = im ? `${im.parts.map(pt => `<img src="${pt.url}" alt="Statement" class="w-full rounded border border-slate-700 bg-white mb-1">`).join('')}<div class="text-[10px] text-slate-500 mt-1">The WHOLE statement (about ${im.pages} page${im.pages > 1 ? 's' : ''}) as ${im.parts.length > 1 ? im.parts.length + ' pictures' : 'one picture'}. Computer: right-click → Copy image. Phone: press and hold → Save image.</div>` : '<span class="text-amber-300">A picture could not be made in this browser — use <b>Copy text summary</b> or <b>Save as PDF</b>.</span>';
             });
         },
-        async pmCopyPic(k) {
-            const it = pPending[k]; if (!it) return; const im = await pmMakeImage(it.ref);
+        async pmCopyPic(k, n) {
+            const it = pPending[k]; if (!it) return; const im = await pmMakeImage(it.ref), idx = n || 0;
             if (!im) { await pmCopyText(it.text, 'No picture available here — text summary copied instead.'); return; }
-            try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': im.blob })]); showToast('Statement picture copied — paste it into the chat with Ctrl+V.', 'success'); }
+            try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': im.parts[idx].blob })]); showToast(im.parts.length > 1 ? `Picture part ${idx + 1} of ${im.parts.length} copied — paste it with Ctrl+V, then press “Copy part ${idx + 2 <= im.parts.length ? idx + 2 : 1}” for the next.` : 'Whole statement picture copied — paste it into the chat with Ctrl+V.', 'success'); }
             catch (e) { showToast('The browser blocked copying the picture — right-click the picture in the pop-up and choose Copy image.', 'error'); }
         },
         async pmGo(k, i) {
@@ -6470,13 +6478,13 @@ ${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class=
             const mark = () => { if (!it.done.includes(i)) it.done.push(i); ppSave(); if (it.done.length >= it.contacts.length) pmFinish(k, true); else pmShow(); };
             if (IS_MOBILE && navigator.canShare) {
                 try {
-                    const files = [im ? new File([im.blob], it.ref + '.png', { type: 'image/png' }) : new File([rec.docHtml], it.ref + '.html', { type: 'text/html' })];
+                    const files = im ? im.parts.map((pt, n) => new File([pt.blob], it.ref + (im.parts.length > 1 ? '-part' + (n + 1) : '') + '.png', { type: 'image/png' })) : [new File([rec.docHtml], it.ref + '.html', { type: 'text/html' })];
                     if (navigator.canShare({ files })) { await navigator.share({ title: it.title, text: it.text, files }); mark(); return; }
                 } catch (e) { if (e && e.name === 'AbortError') return; }
             }
             // computer (or no share sheet): copy the picture FIRST (needs focus), then open the chat in a new tab
             if (im && navigator.clipboard && window.ClipboardItem) {
-                navigator.clipboard.write([new ClipboardItem({ 'image/png': im.blob })]).then(() => showToast('Statement picture copied — click the message box in the chat and press Ctrl+V.', 'success'), () => { navigator.clipboard.writeText(it.text).catch(() => {}); showToast('Picture could not be copied; text summary copied instead — paste it in the chat.', 'error'); });
+                navigator.clipboard.write([new ClipboardItem({ 'image/png': im.parts[0].blob })]).then(() => showToast(im.parts.length > 1 ? `Picture part 1 of ${im.parts.length} copied — press Ctrl+V in the chat, then use “Copy part 2” in the pop-up for the rest.` : 'Whole statement picture copied — click the message box in the chat and press Ctrl+V.', 'success'), () => { navigator.clipboard.writeText(it.text).catch(() => {}); showToast('Picture could not be copied; text summary copied instead — paste it in the chat.', 'error'); });
             } else if (navigator.clipboard) { navigator.clipboard.writeText(it.text).then(() => showToast('Text summary copied — paste it in the chat.', 'success'), () => {}); }
             window.open(pmLink(c.id), '_blank');
             mark();
