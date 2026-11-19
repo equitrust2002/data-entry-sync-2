@@ -1151,7 +1151,10 @@
 // Ledger tabs: one tab per Data Entry Sheet. Hidden helper tabs: _Config (shared settings) and _AdminLog (change log).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
 const EMAIL_TOKEN = 'ULLSWATER-CORP-SECURE-9021';
-const SCRIPT_VERSION = 5;
+const SCRIPT_VERSION = 6;
+// ===== FACEBOOK MESSENGER (optional) - paste your Facebook PAGE ACCESS TOKEN between the quotes =====
+const FB_PAGE_TOKEN = '';
+const FB_API = 'https://graph.facebook.com/v21.0';
 
 function J_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 function bump_() { PropertiesService.getScriptProperties().setProperty('rev', Date.now() + '-' + Math.floor(Math.random() * 1000)); }
@@ -1210,6 +1213,27 @@ function doPost(e) {
         return done({ status: 'sent', emailed: opts.to, remaining: MailApp.getRemainingDailyQuota() });
       } catch (me) { return done({ status: 'failed', error: String(me) }); }
     }
+    if (d.action === 'fbsend') {          // send the statement through Facebook Messenger
+      const cache = CacheService.getScriptCache(), key = 'email_' + String(d.id || '');
+      const done = function (o) { try { cache.put(key, JSON.stringify(o), 21600); } catch (ce) {} return J_(o); };
+      if (String(d.token || '') !== EMAIL_TOKEN) return done({ status: 'failed', error: 'Invalid token (Connection tab token does not match EMAIL_TOKEN in the script)' });
+      const prevFb = cache.get(key);
+      if (prevFb &amp;&amp; JSON.parse(prevFb).status === 'sent') return J_(JSON.parse(prevFb));
+      try {
+        if (!FB_PAGE_TOKEN) throw new Error('FB_PAGE_TOKEN is empty - paste your Facebook Page Access Token into the script, then Deploy a New version');
+        const ids = (d.recipients || []).map(String).filter(String), sent = [], failed = [];
+        if (!ids.length) throw new Error('No Messenger recipients');
+        let blob;
+        try { blob = Utilities.newBlob(String(d.pdfHtml || ''), 'text/html', 'Statement.html').getAs('application/pdf').setName(String(d.fileName || 'Statement.pdf')); }
+        catch (pe) { blob = Utilities.newBlob(String(d.pdfHtml || ''), 'text/html', String(d.fileName || 'Statement').replace(/\.pdf$/i, '') + '.html'); }
+        ids.forEach(function (id) {
+          try { if (d.text) fbSend_(id, { text: String(d.text).slice(0, 1900) }, d.tag); fbSendFile_(id, blob, d.tag); sent.push(id); }
+          catch (fe) { failed.push(id + ': ' + fe.message); }
+        });
+        if (!sent.length) return done({ status: 'failed', error: failed.join(' | ') });
+        return done({ status: 'sent', error: failed.length ? ('Sent to ' + sent.length + ', FAILED for: ' + failed.join(' | ')) : '' });
+      } catch (fe2) { return done({ status: 'failed', error: String(fe2.message || fe2) }); }
+    }
     // ===== shared settings (forms, users, statement setup, ...) and admin change log =====
     if (d.action === 'config') { saveConfig_(String(d.key), String(d.value), Number(d.t) || Date.now(), String(d.by || '')); bump_(); return J_({ ok: true }); }
     if (d.action === 'adminlog') { log_(d.user, d.logAction, d.target, d.detail); bump_(); return J_({ ok: true }); }
@@ -1255,6 +1279,27 @@ function authorizeEmail() {
   Logger.log('Done. A test email was sent to ' + me + '. Now do step 5 (Deploy).');
 }
 
+function fbCall_(path, opt) {
+  opt = opt || {}; opt.muteHttpExceptions = true;
+  const r = UrlFetchApp.fetch(FB_API + path, opt), j = JSON.parse(r.getContentText() || '{}');
+  if (j.error) throw new Error(j.error.message + (j.error.code ? ' (code ' + j.error.code + (j.error.error_subcode ? '/' + j.error.error_subcode : '') + ')' : ''));
+  return j;
+}
+function fbSend_(psid, message, tag) {
+  const body = { recipient: { id: psid }, messaging_type: tag ? 'MESSAGE_TAG' : 'RESPONSE', message: message }; if (tag) body.tag = tag;
+  return fbCall_('/me/messages?access_token=' + encodeURIComponent(FB_PAGE_TOKEN), { method: 'post', contentType: 'application/json', payload: JSON.stringify(body) });
+}
+function fbSendFile_(psid, blob, tag) {
+  const pl = { recipient: JSON.stringify({ id: psid }), messaging_type: tag ? 'MESSAGE_TAG' : 'RESPONSE', message: JSON.stringify({ attachment: { type: 'file', payload: { is_reusable: false } } }), filedata: blob }; if (tag) pl.tag = tag;
+  return fbCall_('/me/messages?access_token=' + encodeURIComponent(FB_PAGE_TOKEN), { method: 'post', payload: pl });
+}
+// Run this ONCE (Run &gt; allow) after pasting FB_PAGE_TOKEN. It gives the script permission to contact Facebook.
+function authorizeMessenger() {
+  if (!FB_PAGE_TOKEN) throw new Error('Paste your Page Access Token into FB_PAGE_TOKEN first, then Save and run again.');
+  const me = fbCall_('/me?fields=name&amp;access_token=' + encodeURIComponent(FB_PAGE_TOKEN));
+  Logger.log('Connected to Facebook Page: ' + me.name + '. Now Deploy &gt; Manage deployments &gt; Edit &gt; New version &gt; Deploy.');
+}
+
 // ===== REAL-TIME: run setupRealtime ONCE (Run &gt; allow). It makes every manual edit / row delete in the Google Sheet reach all app users within seconds =====
 function setupRealtime() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1286,6 +1331,21 @@ function doGet(e) {
     const raw = CacheService.getScriptCache().get('email_' + String(p.id || ''));
     const r = raw ? JSON.parse(raw) : { status: 'pending' };
     return J_({ ok: true, emailStatus: r.status, error: r.error || '' });
+  }
+  if (p.action === 'fbcheck') {
+    const tokOk = String(p.token || '') === EMAIL_TOKEN, o = { ok: true, fbSupport: true, version: SCRIPT_VERSION, tokenOk: tokOk, configured: !!FB_PAGE_TOKEN };
+    if (tokOk &amp;&amp; FB_PAGE_TOKEN) { try { const me = fbCall_('/me?fields=name,id&amp;access_token=' + encodeURIComponent(FB_PAGE_TOKEN)); o.pageName = me.name; o.pageId = me.id; } catch (fe) { o.error = String(fe.message || fe); } }
+    return J_(o);
+  }
+  if (p.action === 'fbcontacts') {
+    if (String(p.token || '') !== EMAIL_TOKEN || !FB_PAGE_TOKEN) return J_({ ok: false, error: 'Token mismatch or FB_PAGE_TOKEN empty' });
+    try {
+      const me = fbCall_('/me?fields=id&amp;access_token=' + encodeURIComponent(FB_PAGE_TOKEN));
+      const cv = fbCall_('/me/conversations?fields=participants,updated_time&amp;limit=50&amp;access_token=' + encodeURIComponent(FB_PAGE_TOKEN));
+      const seen = {}, list = [];
+      (cv.data || []).forEach(function (c) { ((c.participants &amp;&amp; c.participants.data) || []).forEach(function (u) { if (u.id !== me.id &amp;&amp; !seen[u.id]) { seen[u.id] = 1; list.push({ id: u.id, name: u.name || '', t: c.updated_time || '' }); } }); });
+      return J_({ ok: true, contacts: list });
+    } catch (fe) { return J_({ ok: false, error: String(fe.message || fe) }); }
   }
   if (p.action === 'emailcheck') {
     const tokenOk = String(p.token || '') === EMAIL_TOKEN, out = { ok: true, emailSupport: true, version: SCRIPT_VERSION, tokenOk: tokenOk };
@@ -5880,7 +5940,7 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
     const visible = () => ldCache.filter(r => activeUserRole === 'Administrator' || r.by === activeUser).sort((a, b) => (b.ts || 0) - (a.ts || 0));
     function mountLedger() {
         if (document.getElementById('stmt-ledger-card')) return;
-        const em = document.getElementById('stmt-email-panel'); if (!em) return;
+        const em = document.getElementById('stmt-msgr-card') || document.getElementById('stmt-email-panel'); if (!em) return;
         const d = document.createElement('div'); d.id = 'stmt-ledger-card'; d.className = 'bg-slate-900 border border-sky-700/40 rounded-2xl overflow-hidden';
         d.innerHTML = `<div class="p-4 border-b border-slate-800 flex items-start justify-between gap-3 flex-wrap">
   <div><h4 class="text-xs font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-book text-sky-400 mr-1.5"></i>Statement Ledger — copies of every printed &amp; emailed statement</h4>
@@ -5994,7 +6054,436 @@ ${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class=
     }
     const _init3 = initStatementTab; initStatementTab = function () { const r = _init3.apply(this, arguments); try { syncSheetSelects(); mapTabs(); } catch (e) { console.error(e); } return r; };
 
-    mountPivotCard(); mountLedger(); ldLoad();
+
+    // =================================================================== FACEBOOK MESSENGER: send now + daily auto-send
+    const MF_KEY = 'ullswater_msgr_form', MS_KEY = 'ullswater_msgr_scheds';
+    let mf = { recipients: [], msg: '', time: '08:00', period: 'yesterday', late: true, tag: '' };
+    try { Object.assign(mf, JSON.parse(localStorage.getItem(MF_KEY)) || {}); } catch (e) {}
+    let msScheds = []; try { msScheds = JSON.parse(localStorage.getItem(MS_KEY)) || []; } catch (e) {}
+    const mfSave = () => { try { localStorage.setItem(MF_KEY, JSON.stringify(mf)); } catch (e) {} };
+    const msSave = () => { try { localStorage.setItem(MS_KEY, JSON.stringify(msScheds)); } catch (e) {} };
+    const mq = id => document.getElementById(id);
+    function msgrStatus(h, kind) { const el = mq('msgr-status'); if (!el) return; el.className = 'md:col-span-2 text-[11px] leading-relaxed rounded-lg border p-3 ' + (kind === 'ok' ? 'border-emerald-700 bg-emerald-950/40 text-emerald-200' : kind === 'err' ? 'border-rose-700 bg-rose-950/40 text-rose-200' : 'border-slate-700 bg-slate-950 text-slate-200'); el.innerHTML = h; }
+    const TAGS = { '': 'None — standard (person must have messaged the Page in the last 24 hours)', HUMAN_AGENT: 'Human agent (up to 7 days after their last message)', ACCOUNT_UPDATE: 'Account update (only if your Meta app is approved for it)' };
+
+    function mountMessenger() {
+        if (mq('stmt-msgr-card')) return;
+        const em = mq('stmt-email-panel'); if (!em) return;
+        const d = document.createElement('div'); d.id = 'stmt-msgr-card'; d.className = 'bg-slate-900 border border-blue-700/40 rounded-2xl overflow-hidden';
+        const inp = 'w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2', lab = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
+        d.innerHTML = `<div class="p-4 border-b border-slate-800"><h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2"><i class="fa-brands fa-facebook-messenger text-blue-400"></i> Advanced (optional): fully automatic through a Facebook Page — business account <span id="msgr-badge" class="ml-2 normal-case text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">not checked</span></h4>
+<p class="text-[11px] text-slate-400 mt-1">Only needed if you want 100% hands-free sending with nobody tapping anything. This requires a Facebook <b>Page</b> and Meta developer app (a business-type account). If you only use your personal Messenger, use the personal card above instead.</p></div>
+<details class="group"><summary class="px-4 py-3 text-xs font-bold text-slate-300 cursor-pointer select-none bg-slate-950/40">Show the Page-based setup</summary>
+<details class="border-b border-slate-800"><summary class="px-4 py-3 text-xs font-bold text-amber-300 cursor-pointer select-none"><i class="fa-solid fa-list-check mr-1"></i> Setup for automatic Messenger sending (one time)</summary>
+<ol class="list-decimal ml-9 mr-4 pb-4 text-[12px] text-slate-300 space-y-1.5 leading-relaxed">
+<li>You need a <b>Facebook Page</b> (messages are sent <i>from the Page</i>, not from a personal account). Create one if you have none.</li>
+<li>Go to <span class="font-mono">developers.facebook.com</span> → <b>My Apps → Create App</b> (type <i>Business</i>) → add the <b>Messenger</b> product → <b>Messenger API settings → Add or remove Pages</b> → connect your Page → <b>Generate token</b>. Copy the <b>Page Access Token</b>.</li>
+<li>In <b>Connection tab → Copy Script</b> (this file has an updated script), paste it into Apps Script (replace everything) and put the token between the quotes of <span class="font-mono">FB_PAGE_TOKEN = ''</span>. <b>Save</b>.</li>
+<li>Choose <b>authorizeMessenger</b> in the function list → <b>Run</b> → allow the permission (it needs to contact Facebook). The log must say “Connected to Facebook Page …”.</li>
+<li><b>Deploy → Manage deployments → ✏ → New version → Deploy</b> (same as the email setup).</li>
+<li>Each person who should receive statements must <b>send any message (e.g. “hi”) to your Page</b>. Then press <b>Find people who messaged my Page</b> below and tick them.</li>
+<li>Press <b>Test Messenger Setup</b>.</li></ol>
+<div class="mx-4 mb-4 text-[11px] text-amber-200 bg-amber-950/30 border border-amber-800/50 rounded-lg p-3 leading-relaxed"><b>Facebook rules to know:</b> (1) A Page can only message people who messaged it within the last 24 hours — a daily auto-send therefore works when the person sends the Page a quick message each day, or when you use an allowed message tag below. (2) While your Meta app is in <i>Development</i> mode, only people with a role on the app (admin / developer / tester) can receive messages; to message anyone else Meta requires app review for <span class="font-mono">pages_messaging</span>. (3) Group chats are not supported — each recipient gets their own chat.</div></details>
+<div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+<div class="md:col-span-2"><label class="${lab}">Messenger recipients</label><div id="msgr-rcpts" class="flex flex-wrap gap-1.5 mb-2"></div>
+<div class="flex flex-wrap gap-2"><input id="msgr-add-id" type="text" placeholder="Recipient ID (PSID)" class="${inp} flex-1 min-w-[160px]"><input id="msgr-add-name" type="text" placeholder="Name (optional)" class="${inp} flex-1 min-w-[140px]"><button type="button" onclick="msgrAddManual()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg border border-slate-700">Add</button><button type="button" onclick="msgrFindPeople()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg border border-slate-700"><i class="fa-solid fa-magnifying-glass mr-1"></i>Find people who messaged my Page</button></div>
+<div id="msgr-found" class="hidden mt-2 bg-slate-950 border border-slate-700 rounded-lg p-3"></div></div>
+<div class="md:col-span-2"><label class="${lab}">Message (optional, shown before the statement)</label><textarea id="msgr-msg" rows="2" oninput="msgrSaveForm()" placeholder="e.g. Good morning, here is yesterday's statement." class="${inp}"></textarea></div>
+<div><label class="${lab}">Auto-send time of day</label><input type="time" id="msgr-time" onchange="msgrSaveForm()" class="${inp}"></div>
+<div><label class="${lab}">Period covered by the auto-sent statement</label><select id="msgr-period" onchange="msgrSaveForm()" class="${inp}">${Object.entries(EM_PERIODS).map(([k, v]) => `<option value="${k}">${escH(v)}</option>`).join('')}</select></div>
+<div class="md:col-span-2"><label class="${lab}">Facebook message tag (advanced)</label><select id="msgr-tag" onchange="msgrSaveForm()" class="${inp}">${Object.entries(TAGS).map(([k, v]) => `<option value="${k}">${escH(v)}</option>`).join('')}</select></div>
+<label class="md:col-span-2 flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" id="msgr-late" onchange="msgrSaveForm()" class="accent-blue-600"> If the app was closed at that time, send it as soon as the app is opened that day</label>
+<div class="md:col-span-2 flex gap-2 flex-wrap">
+<button id="msgr-send-btn" type="button" onclick="msgrSendNow()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2"><i class="fa-brands fa-facebook-messenger"></i> Send via Messenger Now (as shown above)</button>
+<button type="button" onclick="msgrSaveSchedule()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2"><i class="fa-solid fa-clock"></i> Save Daily Auto-Send</button>
+<button type="button" onclick="msgrTest()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2 border border-slate-700"><i class="fa-solid fa-stethoscope"></i> Test Messenger Setup</button></div>
+<div id="msgr-status" class="md:col-span-2 hidden"></div>
+<p class="md:col-span-2 text-[10px] text-slate-500 leading-relaxed">A daily auto-send saves the current Statement Setup (ticked sheets, field mapping, pivot, targets, signatories) and sends at the chosen time every day. <b>The page must be open in a browser at that time</b> (same as the email auto-send).</p></div>
+<div class="border-t border-slate-800 overflow-x-auto"><table class="w-full text-left text-xs text-slate-300"><thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr><th class="p-3">Owner</th><th class="p-3">Daily at</th><th class="p-3">Period</th><th class="p-3">Recipients</th><th class="p-3">Sheets</th><th class="p-3">Last result</th><th class="p-3 text-right">Actions</th></tr></thead><tbody id="msgr-sched-body" class="divide-y divide-slate-800/60"></tbody></table></div></details>`;
+        const anchor = mq('stmt-ledger-card'); if (anchor) anchor.insertAdjacentElement('beforebegin', d); else em.insertAdjacentElement('afterend', d);
+        msgrLoadForm(); msgrRcpts(); msgrRenderScheds();
+    }
+    function msgrLoadForm() { if (mq('msgr-msg')) { mq('msgr-msg').value = mf.msg || ''; mq('msgr-time').value = mf.time || '08:00'; mq('msgr-period').value = mf.period || 'yesterday'; mq('msgr-tag').value = mf.tag || ''; mq('msgr-late').checked = mf.late !== false; } }
+    function msgrRcpts() { const el = mq('msgr-rcpts'); if (!el) return; el.innerHTML = mf.recipients.length ? mf.recipients.map((r, i) => `<span class="inline-flex items-center gap-1 bg-blue-900/40 border border-blue-600/60 text-blue-100 text-[11px] rounded-lg pl-2 pr-1 py-1"><i class="fa-brands fa-facebook-messenger text-blue-300"></i>${escH(r.name || 'Contact')} <span class="text-blue-300/70 font-mono">${escH(r.id)}</span><button type="button" onclick="msgrRemove(${i})" class="px-1 text-rose-300 hover:text-rose-200">✕</button></span>`).join('') : '<span class="text-[11px] text-slate-600">— none yet —</span>'; }
+    Object.assign(window, {
+        msgrSaveForm() { mf.msg = mq('msgr-msg').value; mf.time = mq('msgr-time').value; mf.period = mq('msgr-period').value; mf.tag = mq('msgr-tag').value; mf.late = mq('msgr-late').checked; mfSave(); },
+        msgrRemove(i) { mf.recipients.splice(i, 1); mfSave(); msgrRcpts(); },
+        msgrAddManual() { const id = mq('msgr-add-id').value.trim().replace(/\s+/g, ''); if (!/^\d{6,}$/.test(id)) { showToast('A Messenger recipient ID is a long number. Use “Find people who messaged my Page” to get it.', 'error'); return; } if (!mf.recipients.some(r => r.id === id)) mf.recipients.push({ id, name: mq('msgr-add-name').value.trim() }); mq('msgr-add-id').value = ''; mq('msgr-add-name').value = ''; mfSave(); msgrRcpts(); }
+    });
+
+    // ---- talk to the Apps Script
+    async function fbCheck() {
+        const s = emSettings(), url = String(s.webappId || '').trim();
+        if (!url) return { ok: false, msg: 'The Google Apps Script Web App URL is empty. Complete the Connection setup (email guide, step 6) first.' };
+        let j = null; try { const res = await fetch(emUrl(url, 'action=fbcheck&token=' + encodeURIComponent(emToken())), { cache: 'no-store' }); j = JSON.parse(await res.text()); } catch (e) { return { ok: false, msg: 'Could not reach your Google Apps Script. Check the Web App URL, that “Who has access” is Anyone, and your internet.' }; }
+        if (!j || !j.fbSupport) return { ok: false, msg: 'Your deployed Google script is the OLD version. Connection tab → Copy Script → paste into Apps Script → Deploy → Manage deployments → Edit → New version → Deploy.' };
+        if (!j.tokenOk) return { ok: false, msg: 'The Security Token in the Connection tab does not match EMAIL_TOKEN in the script.' };
+        if (!j.configured) return { ok: false, msg: 'FB_PAGE_TOKEN is empty in the script. Paste your Facebook Page Access Token between the quotes, Save, run authorizeMessenger, then Deploy a New version.' };
+        if (j.error) return { ok: false, msg: 'Facebook refused the Page token: ' + j.error + ' — generate a new Page Access Token, put it in the script and redeploy.' };
+        return { ok: true, page: j.pageName || 'your Page' };
+    }
+    async function fbPost(payload) {
+        const chk = await fbCheck(); if (!chk.ok) return chk;
+        const s = emSettings(), id = payload.id || ('FB-' + Date.now().toString(36) + Math.floor(Math.random() * 1e5).toString(36));
+        const body = JSON.stringify(Object.assign({}, payload, { action: 'fbsend', token: emToken(), id }));
+        fetch(s.webappId, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body }).catch(() => {});
+        for (let i = 0; i < 24; i++) {
+            await emSleep(i === 0 ? 4000 : 2500);
+            try {
+                const j = await (await fetch(emUrl(s.webappId, 'action=emailresult&id=' + encodeURIComponent(id)), { cache: 'no-store' })).json();
+                if (j.emailStatus === 'sent') return { ok: true, msg: 'Sent from ' + chk.page + (j.error ? ' — ' + j.error : ''), partial: j.error || '' };
+                if (j.emailStatus === 'failed') { const er = j.error || 'Facebook refused the message'; return { ok: false, msg: er + (/\(#?10\)|code 10|2018278|outside of allowed window|24/i.test(er) ? ' — The person has not messaged your Page in the last 24 hours. Ask them to send the Page any message, or choose a message tag.' : '') }; }
+            } catch (e) {}
+        }
+        return { ok: false, msg: 'No confirmation from Google after 60 seconds (it may still arrive). Check the Apps Script → Executions page.' };
+    }
+    const msgrText = (P, m) => ((m ? m + '\n\n' : '') + P.text).slice(0, 1900);
+    const rNames = list => list.map(r => r.name || r.id).join(', ');
+
+    Object.assign(window, {
+        async msgrFindPeople() {
+            msgrStatus('<i class="fa-solid fa-spinner fa-spin"></i> Asking Facebook who has messaged your Page…');
+            const c = await fbCheck(); if (!c.ok) { msgrStatus('<b>✗</b> ' + escH(c.msg), 'err'); return; }
+            const s = emSettings(); let j = null;
+            try { j = await (await fetch(emUrl(s.webappId, 'action=fbcontacts&token=' + encodeURIComponent(emToken())), { cache: 'no-store' })).json(); } catch (e) {}
+            if (!j || !j.ok) { msgrStatus('<b>✗</b> ' + escH((j && j.error) || 'Could not read the Page conversations') + ' — the Page token needs the pages_messaging permission.', 'err'); return; }
+            const box = mq('msgr-found'); box.classList.remove('hidden');
+            window.__fbFound = j.contacts;
+            box.innerHTML = j.contacts.length ? `<div class="text-[10px] font-bold text-slate-400 uppercase mb-2">Tick the people who should receive statements</div><div class="space-y-1 max-h-48 overflow-y-auto">${j.contacts.map((u, i) => `<label class="flex items-center gap-2 text-[11px] text-slate-200"><input type="checkbox" data-i="${i}" class="accent-blue-600 fb-pick" ${mf.recipients.some(r => r.id === u.id) ? 'checked' : ''}>${escH(u.name || 'Facebook user')} <span class="text-slate-500 font-mono">${escH(u.id)}</span></label>`).join('')}</div><button type="button" onclick="msgrUsePicked()" class="mt-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">Use selected</button>` : '<div class="text-[11px] text-slate-400">Nobody has messaged your Page yet. Ask the person to open your Page on Facebook, press <b>Message</b> and send “hi”, then try again.</div>';
+            msgrStatus('<b>✓</b> Found ' + j.contacts.length + ' conversation(s).', 'ok');
+        },
+        msgrUsePicked() { const picks = [...document.querySelectorAll('.fb-pick')].filter(x => x.checked).map(x => window.__fbFound[+x.dataset.i]); mf.recipients = picks.map(u => ({ id: u.id, name: u.name })); mfSave(); msgrRcpts(); mq('msgr-found').classList.add('hidden'); showToast(picks.length + ' recipient(s) selected', 'success'); },
+        async msgrTest() {
+            msgrStatus('<i class="fa-solid fa-spinner fa-spin"></i> Checking Google script and Facebook…');
+            const c = await fbCheck(); const b = mq('msgr-badge');
+            if (!c.ok) { b.textContent = 'needs setup'; b.className = 'ml-2 normal-case text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-900/60 text-rose-200'; msgrStatus('<b>✗</b> ' + escH(c.msg), 'err'); return; }
+            b.textContent = 'connected · ' + c.page; b.className = 'ml-2 normal-case text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-900/60 text-emerald-200';
+            if (!mf.recipients.length) { msgrStatus('<b>✓ Connected to Facebook Page “' + escH(c.page) + '”.</b> Add at least one recipient, then press Test again to send a test message.', 'ok'); return; }
+            msgrStatus('<b>✓ Connected to “' + escH(c.page) + '”.</b> <i class="fa-solid fa-spinner fa-spin"></i> Sending a test message to ' + escH(rNames(mf.recipients)) + '…', 'ok');
+            const r = await fbPost({ recipients: mf.recipients.map(x => x.id), text: 'Test message from the Ullswater Fleet Hub. Statements will arrive here.', pdfHtml: '<p style="font-family:Arial">Test file — Ullswater Fleet Hub</p>', fileName: 'Test.pdf', tag: mf.tag });
+            msgrStatus(r.ok ? '<b>✓ Test message sent to ' + escH(rNames(mf.recipients)) + '.</b> ' + escH(r.partial || '') : '<b>✗ Test failed:</b> ' + escH(r.msg), r.ok ? 'ok' : 'err');
+        },
+        async msgrSendNow() {
+            msgrSaveForm(); if (!mf.recipients.length) { showToast('Add at least one Messenger recipient.', 'error'); return; }
+            if (!stmtCfg) loadStmtCfg(); renderStatement();
+            const P = buildEmailPayload(stmtLastData, { to: [], subject: '', message: '' }); P.to = rNames(mf.recipients);
+            const btn = mq('msgr-send-btn'); if (btn) btn.disabled = true;
+            msgrStatus('<i class="fa-solid fa-spinner fa-spin"></i> Sending to Messenger… (up to 60 seconds)');
+            const r = await fbPost({ recipients: mf.recipients.map(x => x.id), text: msgrText(P, mf.msg), pdfHtml: P.pdfHtml, fileName: P.fileName, tag: mf.tag });
+            if (btn) btn.disabled = false;
+            try { await saveFromEmail(P, r, { action: 'Messenger' }); } catch (e) {}
+            msgrStatus(r.ok ? '<b>✓ Statement sent via Messenger to ' + escH(P.to) + '.</b> ' + escH(r.partial || '') + ' Filed in the ledger as ' + escH(P.meta.ref) + '.' : '<b>✗ Not sent:</b> ' + escH(r.msg), r.ok ? 'ok' : 'err');
+            showToast(r.ok ? 'Statement sent via Messenger' : 'Messenger send failed – see the panel', r.ok ? 'success' : 'error');
+            try { logAccess(r.ok ? 'Sent Statement via Messenger' : 'Messenger send FAILED', P.to + (r.ok ? '' : ' · ' + r.msg)); } catch (e) {}
+        },
+        async msgrShareManual() {
+            if (!stmtCfg) loadStmtCfg(); renderStatement();
+            const P = buildEmailPayload(stmtLastData, { to: [], subject: '', message: '' }); P.to = 'Messenger (manual share)';
+            const text = msgrText(P, mf.msg || '');
+            try { await saveFromEmail(P, { ok: true }, { action: 'Messenger (manual share)', status: 'Prepared' }); } catch (e) {}
+            try {
+                const file = new File([P.pdfHtml], P.fileName.replace(/\.pdf$/i, '') + '.html', { type: 'text/html' });
+                if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ title: P.subject, text, files: [file] }); return; }
+            } catch (e) { if (e && e.name === 'AbortError') return; }
+            let ok = false; try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {}
+            window.open('https://www.messenger.com/', '_blank');
+            showToast(ok ? 'Summary copied — paste it into the Messenger chat. Use Print → Save as PDF to attach the full statement.' : 'Messenger opened — copy the summary from the Ledger copy.', 'success');
+        },
+        msgrSaveSchedule() {
+            msgrSaveForm(); if (!mf.recipients.length) { showToast('Add at least one Messenger recipient.', 'error'); return; }
+            if (!/^\d{2}:\d{2}$/.test(mf.time)) { showToast('Choose the time of day.', 'error'); return; }
+            if (!stmtCfg) loadStmtCfg(); saveStmtCfg();
+            const s = { id: 'MSS-' + Date.now().toString(36), owner: activeUser, recipients: JSON.parse(JSON.stringify(mf.recipients)), message: mf.msg, time: mf.time, period: mf.period || 'yesterday', tag: mf.tag, late: !!mf.late, enabled: true, cfg: JSON.parse(JSON.stringify(stmtCfg)), sheetNames: emSheetNames(), lastDate: '', lastStatus: '', lastSent: '', nextTry: 0 };
+            msScheds.push(s); msSave(); msgrRenderScheds();
+            try { logAccess('Daily Messenger auto-send saved', `${s.time} · ${EM_PERIODS[s.period]} · ${rNames(s.recipients)}`); } catch (e) {}
+            showToast(`Daily Messenger auto-send saved for ${s.time}. Keep this page open at that time.`, 'success');
+        },
+        msgrToggle(id, on) { const s = msScheds.find(x => x.id === id); if (!s || !msCan(s)) return; s.enabled = !!on; s.nextTry = 0; msSave(); msgrRenderScheds(); },
+        msgrDelete(id) { const s = msScheds.find(x => x.id === id); if (!s || !msCan(s)) return; msScheds = msScheds.filter(x => x.id !== id); msSave(); msgrRenderScheds(); },
+        msgrRunNow(id) { const s = msScheds.find(x => x.id === id); if (s && msCan(s)) runMsgrSchedule(s, true); }
+    });
+    const msCan = s => activeUserRole === 'Administrator' || s.owner === activeUser;
+    function msgrRenderScheds() {
+        const body = mq('msgr-sched-body'); if (!body) return;
+        const rows = msScheds.filter(s => activeUserRole === 'Administrator' || s.owner === activeUser);
+        body.innerHTML = rows.length ? rows.map(s => `<tr class="hover:bg-slate-800/40"><td class="p-3 whitespace-nowrap">@${escH(s.owner)}</td><td class="p-3 font-mono text-blue-300 whitespace-nowrap">${escH(s.time)}</td><td class="p-3">${escH(EM_PERIODS[s.period] || s.period)}</td><td class="p-3 max-w-[180px] truncate" title="${escH(rNames(s.recipients))}">${escH(rNames(s.recipients))}</td><td class="p-3 max-w-[160px] truncate" title="${escH(s.sheetNames)}">${escH(s.sheetNames)}</td><td class="p-3 text-[11px] ${/^Failed/.test(s.lastStatus) ? 'text-rose-300' : 'text-emerald-300'}">${escH(s.lastStatus || '—')}${s.lastSent ? `<div class="text-slate-500">${escH(s.lastSent)}</div>` : ''}</td><td class="p-3 text-right whitespace-nowrap">${msCan(s) ? `<button class="px-2 py-1 rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-[11px]" onclick="msgrRunNow('${s.id}')">Send now</button> <button class="px-2 py-1 rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-[11px]" onclick="msgrToggle('${s.id}',${!s.enabled})">${s.enabled ? 'Pause' : 'Resume'}</button> <button class="px-2 py-1 rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-[11px] text-rose-300" onclick="msgrDelete('${s.id}')">Delete</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="7" class="p-6 text-center text-slate-500">No daily Messenger auto-send saved yet.</td></tr>';
+    }
+    async function runMsgrSchedule(s, manual) {
+        const today = isoDate(new Date());
+        if (!manual) {
+            try { const fresh = (JSON.parse(localStorage.getItem(MS_KEY)) || []).find(x => x.id === s.id); if (fresh && fresh.lastDate === today) { s.lastDate = today; return; } } catch (e) {}
+            s.lastDate = today; msSave();
+        }
+        let P = null, err = '';
+        try { P = withSchedCtx(s, () => buildEmailPayload(computeStatement(), { to: [], subject: '', message: '' })); } catch (e) { err = e.message || String(e); }
+        if (P) { P.to = rNames(s.recipients); if (!manual) P.id = 'FB-' + s.id + '-' + today; }
+        const r = P ? await fbPost({ id: P.id, recipients: s.recipients.map(x => x.id), text: msgrText(P, s.message), pdfHtml: P.pdfHtml, fileName: P.fileName, tag: s.tag }) : { ok: false, msg: err };
+        if (P) { try { await saveFromEmail(P, r, { action: manual ? 'Messenger' : 'Scheduled Messenger' }); } catch (e) {} }
+        const stamp = getLocalTimestamp();
+        if (r.ok) { s.lastStatus = 'Sent'; s.lastSent = stamp; s.nextTry = 0; }
+        else { s.lastStatus = 'Failed: ' + r.msg; s.lastSent = stamp; if (!manual) { s.lastDate = ''; s.nextTry = Date.now() + 10 * 60000; } }
+        msSave(); msgrRenderScheds();
+        try { withSchedCtx(s, () => logAccess(r.ok ? (manual ? 'Messenger statement (manual run of saved schedule)' : 'Scheduled Messenger statement sent') : 'Scheduled Messenger statement FAILED', `${rNames(s.recipients)}${r.ok ? '' : ' · ' + r.msg}`)); } catch (e) {}
+        try { renderAccessLog(); } catch (e) {}
+        showToast(r.ok ? 'Statement sent via Messenger to ' + rNames(s.recipients) : 'Scheduled Messenger send failed: ' + r.msg, r.ok ? 'success' : 'error');
+    }
+    let msBusy = false;
+    async function checkMsgrSchedules() {
+        if (msBusy) return;
+        const now = new Date(), today = isoDate(now), nowMin = now.getHours() * 60 + now.getMinutes();
+        for (const s of msScheds) {
+            if (!s.enabled || s.lastDate === today) continue;
+            const [h, m] = String(s.time).split(':').map(Number), at = h * 60 + m;
+            if (isNaN(at) || nowMin < at) continue;
+            if (!s.late && nowMin - at > 10) continue;
+            if (s.nextTry && Date.now() < s.nextTry) continue;
+            msBusy = true; try { await runMsgrSchedule(s, false); } finally { msBusy = false; }
+        }
+    }
+    setInterval(checkMsgrSchedules, 30000); setTimeout(checkMsgrSchedules, 6000);
+    const _swM = switchTab; switchTab = function (t) { const r = _swM.apply(this, arguments); if (t === 'statement') { mountMessenger(); msgrLoadForm(); msgrRcpts(); msgrRenderScheds(); } return r; };
+
+
+    // =================================================================== PERSONAL FACEBOOK MESSENGER (no Page / no business account)
+    const PF_KEY = 'ullswater_pmsg_form', PS_KEY = 'ullswater_pmsg_scheds', PP_KEY = 'ullswater_pmsg_pending';
+    let pf = { contacts: [], msg: '', time: '08:00', period: 'yesterday', late: true, notify: true };
+    try { Object.assign(pf, JSON.parse(localStorage.getItem(PF_KEY)) || {}); } catch (e) {}
+    let pScheds = [], pPending = [];
+    try { pScheds = JSON.parse(localStorage.getItem(PS_KEY)) || []; } catch (e) {}
+    try { pPending = JSON.parse(localStorage.getItem(PP_KEY)) || []; } catch (e) {}
+    const pfSave = () => { try { localStorage.setItem(PF_KEY, JSON.stringify(pf)); } catch (e) {} };
+    const psSave = () => { try { localStorage.setItem(PS_KEY, JSON.stringify(pScheds)); } catch (e) {} };
+    const ppSave = () => { try { localStorage.setItem(PP_KEY, JSON.stringify(pPending)); } catch (e) {} };
+    function pmNormalize(input) {
+        let v = String(input || '').trim(); if (!v) return null;
+        const m = v.match(/profile\.php\?id=(\d+)/); if (m) return m[1];
+        v = v.replace(/^https?:\/\//i, '').replace(/^(?:www\.|m\.|web\.|mbasic\.)?(?:facebook\.com|messenger\.com\/t|m\.me|fb\.me)\//i, '');
+        v = v.split(/[?#\/]/)[0];
+        return /^[A-Za-z0-9.\-_]{3,}$/.test(v) ? v : null;
+    }
+    function pmStatus(h, kind) { const el = mq('pm-status'); if (!el) return; el.className = 'md:col-span-2 text-[11px] leading-relaxed rounded-lg border p-3 ' + (kind === 'ok' ? 'border-emerald-700 bg-emerald-950/40 text-emerald-200' : kind === 'err' ? 'border-rose-700 bg-rose-950/40 text-rose-200' : 'border-slate-700 bg-slate-950 text-slate-200'); el.innerHTML = h; }
+    function mountPersonal() {
+        if (mq('stmt-pmsg-card')) return;
+        const anchor = mq('stmt-msgr-card') || mq('stmt-ledger-card') || mq('stmt-email-panel'); if (!anchor) return;
+        const d = document.createElement('div'); d.id = 'stmt-pmsg-card'; d.className = 'bg-slate-900 border border-blue-500/50 rounded-2xl overflow-hidden';
+        const inp = 'w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2', lab = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
+        d.innerHTML = `<div class="p-4 border-b border-slate-800"><h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2"><i class="fa-brands fa-facebook-messenger text-blue-400"></i> Send via my personal Facebook Messenger <span id="pm-badge" class="ml-2 normal-case text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400"></span></h4>
+<p class="text-[11px] text-slate-400 mt-1 leading-relaxed">Uses <b>your own Messenger account</b> — no Facebook Page, no business account, no tokens. Facebook does not let any app send from a personal account by itself, so at the time you set the app <b>prepares the statement and alerts you</b>; you then tap one button per person and Messenger opens with everything ready.</p></div>
+<details class="border-b border-slate-800" open><summary class="px-4 py-3 text-xs font-bold text-amber-300 cursor-pointer select-none"><i class="fa-solid fa-list-check mr-1"></i> Step by step (3 minutes, one time)</summary>
+<ol class="list-decimal ml-9 mr-4 pb-4 text-[12px] text-slate-300 space-y-1.5 leading-relaxed">
+<li><b>Computer only:</b> open <span class="font-mono">messenger.com</span> in this same browser and sign in to your personal Facebook once (tick “Keep me signed in”). Phone: just have the Messenger app installed and logged in.</li>
+<li>Open the person’s Facebook profile and copy the address from the browser bar (phone: profile → ⋯ → Copy link). Example: <span class="font-mono">facebook.com/juan.delacruz</span>.</li>
+<li>Below, type their <b>Name</b>, paste the link and press <b>Add</b>. Then click <b>test chat ↗</b> on the blue chip — their Messenger chat must open. If it does not, change <b>Open chats with</b> to another option and test again.</li>
+<li>Set the <b>time</b> and <b>period</b>, then press <b>Save Daily Alert &amp; Auto-Prepare</b> (allow notifications if asked). Keep this page open in a browser tab.</li>
+<li>Press <b>Prepare &amp; Send via Messenger Now</b> once to practise.</li>
+<li>In the pop-up: press <b>Open chat</b> (computer) or <b>Share to Messenger</b> (phone). On a computer click the chat’s message box, press <b>Ctrl+V</b> (the statement picture appears) and <b>Enter</b>. For all pages send the PDF: press <b>Save as PDF / Print</b>, save it, and drag it into the chat.</li>
+</ol></details>
+<div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+<div class="md:col-span-2"><label class="${lab}">Who to send to (their Messenger / Facebook link)</label><div id="pm-rcpts" class="flex flex-wrap gap-1.5 mb-2"></div>
+<div class="flex flex-wrap gap-2"><input id="pm-add-name" type="text" placeholder="Name" class="${inp} flex-1 min-w-[130px]"><input id="pm-add-link" type="text" placeholder="facebook.com/juan.delacruz  or  m.me/juan.delacruz  or username" class="${inp} flex-[2] min-w-[220px]"><button type="button" onclick="pmAdd()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg border border-slate-700">Add</button></div>
+<p class="text-[10px] text-slate-500 mt-1">Open the person’s Facebook profile and copy the address from the browser bar (or from Share → Copy link). Their username is the part after facebook.com/.</p></div>
+<div class="md:col-span-2"><label class="${lab}">Message (optional, goes above the summary)</label><textarea id="pm-msg" rows="2" oninput="pmSaveForm()" placeholder="e.g. Good morning, here is yesterday's statement." class="${inp}"></textarea></div>
+<div><label class="${lab}">Alert me every day at</label><input type="time" id="pm-time" onchange="pmSaveForm()" class="${inp}"></div>
+<div><label class="${lab}">Period covered</label><select id="pm-period" onchange="pmSaveForm()" class="${inp}">${Object.entries(EM_PERIODS).map(([k, v]) => `<option value="${k}">${escH(v)}</option>`).join('')}</select></div>
+<div class="md:col-span-2"><label class="${lab}">Open chats with</label><select id="pm-open" onchange="pmSaveForm();pmRcpts()" class="${inp}"><option value="">Automatic (Messenger website on computer · m.me on phone)</option><option value="messenger">Messenger website — messenger.com (best on computer; sign in there once)</option><option value="facebook">Facebook website — facebook.com/messages</option><option value="mme">m.me link (best on phone)</option></select></div>
+<label class="flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" id="pm-notify" onchange="pmSaveForm()" class="accent-blue-600"> Also show a phone / computer notification and beep</label>
+<label class="flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" id="pm-late" onchange="pmSaveForm()" class="accent-blue-600"> If the app was closed at that time, alert me when it is opened that day</label>
+<div class="md:col-span-2 flex gap-2 flex-wrap">
+<button type="button" onclick="pmSendNow()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2"><i class="fa-brands fa-facebook-messenger"></i> Prepare &amp; Send via Messenger Now</button>
+<button type="button" onclick="pmSaveSchedule()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2"><i class="fa-solid fa-clock"></i> Save Daily Alert &amp; Auto-Prepare</button>
+<button type="button" id="pm-pending-btn" onclick="pmShow()" class="hidden bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl"></button></div>
+<div id="pm-status" class="md:col-span-2 hidden"></div>
+<p class="md:col-span-2 text-[10px] text-slate-500 leading-relaxed"><b>How it works:</b> at the set time the statement is generated automatically with your saved setup (sheets, fields, pivot) and filed in the Statement Ledger. A pop-up appears (the page must be open, like the email auto-send). Tap <b>Share / open chat</b> next to each person: on a phone the Messenger share sheet opens with the statement file; on a computer the file is downloaded, the summary is copied and the person’s Messenger chat opens — just attach and paste. For a PDF use the <b>Save as PDF</b> button in the pop-up.</p></div>
+<div class="border-t border-slate-800 overflow-x-auto"><table class="w-full text-left text-xs text-slate-300"><thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr><th class="p-3">Owner</th><th class="p-3">Daily at</th><th class="p-3">Period</th><th class="p-3">People</th><th class="p-3">Sheets</th><th class="p-3">Last result</th><th class="p-3 text-right">Actions</th></tr></thead><tbody id="pm-sched-body" class="divide-y divide-slate-800/60"></tbody></table></div>`;
+        anchor.insertAdjacentElement(anchor.id === 'stmt-email-panel' ? 'afterend' : 'beforebegin', d);
+        pmLoadForm(); pmRcpts(); pmRenderScheds(); pmPendingBtn();
+    }
+    function pmLoadForm() { if (mq('pm-msg')) { mq('pm-msg').value = pf.msg || ''; mq('pm-time').value = pf.time || '08:00'; mq('pm-period').value = pf.period || 'yesterday'; mq('pm-notify').checked = pf.notify !== false; mq('pm-late').checked = pf.late !== false; mq('pm-open').value = pf.open || ''; } }
+    function pmRcpts() { const el = mq('pm-rcpts'); if (!el) return; el.innerHTML = pf.contacts.length ? pf.contacts.map((c, i) => `<span class="inline-flex items-center gap-1 bg-blue-900/40 border border-blue-600/60 text-blue-100 text-[11px] rounded-lg pl-2 pr-1 py-1"><i class="fa-brands fa-facebook-messenger text-blue-300"></i>${escH(c.name || c.id)} <a href="${pmLink(c.id)}" target="_blank" rel="noopener" class="text-blue-300/80 hover:text-white underline" title="Click to test that this opens the right chat">test chat ↗</a><button type="button" onclick="pmRemove(${i})" class="px-1 text-rose-300 hover:text-rose-200">✕</button></span>`).join('') : '<span class="text-[11px] text-slate-600">— nobody added yet —</span>'; }
+    window.pmRcpts = pmRcpts;
+    function pmPendingBtn() { const b = mq('pm-pending-btn'); if (!b) return; if (pPending.length) { b.classList.remove('hidden'); b.textContent = pPending.length + ' statement' + (pPending.length > 1 ? 's' : '') + ' waiting to be sent — open'; } else b.classList.add('hidden'); }
+    const pmCan = s => activeUserRole === 'Administrator' || s.owner === activeUser;
+    function pmBeep() { try { const A = window.AudioContext || window.webkitAudioContext, c = new A(), o = c.createOscillator(), g = c.createGain(); o.connect(g); g.connect(c.destination); o.frequency.value = 880; g.gain.value = 0.15; o.start(); setTimeout(() => { o.stop(); c.close(); }, 450); } catch (e) {} }
+    function pmNotify(title, body) { pmBeep(); try { if ('Notification' in window && Notification.permission === 'granted') { const n = new Notification(title, { body }); n.onclick = () => { window.focus(); pmShow(); n.close(); }; } } catch (e) {} }
+
+    async function pmPrepare(P, contacts, msg, notify, sched) {
+        P.to = contacts.map(c => c.name || c.id).join(', ');
+        await saveFromEmail(P, { ok: true }, { action: 'Messenger (personal)', status: 'Prepared' });
+        pPending.push({ ref: P.meta.ref, contacts: JSON.parse(JSON.stringify(contacts)), text: msgrText(P, msg), title: P.subject, when: getLocalTimestamp(), done: [], by: P.meta.by });
+        ppSave(); pmPendingBtn();
+        if (notify) pmNotify('Statement ready to send on Messenger', P.subject);
+        pmShow();
+    }
+    Object.assign(window, {
+        pmSaveForm() { pf.msg = mq('pm-msg').value; pf.time = mq('pm-time').value; pf.period = mq('pm-period').value; pf.notify = mq('pm-notify').checked; pf.late = mq('pm-late').checked; pf.open = mq('pm-open').value; pfSave(); },
+        pmAdd() {
+            const id = pmNormalize(mq('pm-add-link').value); if (!id) { showToast('Paste the person’s Facebook / Messenger link or username (e.g. facebook.com/juan.delacruz).', 'error'); return; }
+            if (!pf.contacts.some(c => c.id === id)) pf.contacts.push({ id, name: mq('pm-add-name').value.trim() || id });
+            mq('pm-add-link').value = ''; mq('pm-add-name').value = ''; pfSave(); pmRcpts();
+        },
+        pmRemove(i) { pf.contacts.splice(i, 1); pfSave(); pmRcpts(); },
+        async pmSendNow() {
+            pmSaveForm(); if (!pf.contacts.length) { showToast('Add at least one person first.', 'error'); return; }
+            if (!stmtCfg) loadStmtCfg(); renderStatement();
+            const P = buildEmailPayload(stmtLastData, { to: [], subject: '', message: '' });
+            await pmPrepare(P, pf.contacts, pf.msg, false);
+        },
+        pmSaveSchedule() {
+            pmSaveForm(); if (!pf.contacts.length) { showToast('Add at least one person first.', 'error'); return; }
+            if (!/^\d{2}:\d{2}$/.test(pf.time)) { showToast('Choose the time of day.', 'error'); return; }
+            if (pf.notify && 'Notification' in window && Notification.permission === 'default') { try { Notification.requestPermission(); } catch (e) {} }
+            if (!stmtCfg) loadStmtCfg(); saveStmtCfg();
+            const s = { id: 'PMS-' + Date.now().toString(36), owner: activeUser, contacts: JSON.parse(JSON.stringify(pf.contacts)), message: pf.msg, time: pf.time, period: pf.period || 'yesterday', notify: !!pf.notify, late: !!pf.late, enabled: true, cfg: JSON.parse(JSON.stringify(stmtCfg)), sheetNames: emSheetNames(), lastDate: '', lastStatus: '', lastSent: '' };
+            pScheds.push(s); psSave(); pmRenderScheds();
+            try { logAccess('Daily personal-Messenger alert saved', `${s.time} · ${EM_PERIODS[s.period]} · ${s.contacts.map(c => c.name).join(', ')}`); } catch (e) {}
+            showToast(`Daily alert saved for ${s.time}. Keep this page open at that time.`, 'success');
+        },
+        pmToggle(id, on) { const s = pScheds.find(x => x.id === id); if (!s || !pmCan(s)) return; s.enabled = !!on; psSave(); pmRenderScheds(); },
+        pmDelete(id) { const s = pScheds.find(x => x.id === id); if (!s || !pmCan(s)) return; pScheds = pScheds.filter(x => x.id !== id); psSave(); pmRenderScheds(); },
+        pmRunNow(id) { const s = pScheds.find(x => x.id === id); if (s && pmCan(s)) runPmSchedule(s, true); },
+        pmShow() {
+            const old = mq('pm-modal'); if (old) old.remove(); if (!pPending.length) { pmPendingBtn(); return; }
+            const ov = document.createElement('div'); ov.id = 'pm-modal'; ov.className = 'fixed inset-0 z-[210] bg-black/70 flex items-center justify-center p-3';
+            const items = pPending.map((it, k) => `<div class="bg-slate-950 border border-slate-700 rounded-xl p-3 space-y-2"><div class="flex items-start justify-between gap-2"><div><div class="text-xs font-bold text-white">${escH(it.title)}</div><div class="text-[10px] text-slate-400">Ledger ${escH(it.ref)} · prepared ${escH(it.when)}</div></div></div>
+<div class="flex flex-wrap gap-1.5"><button type="button" class="${'bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700'}" onclick="ldReprint('${escH(it.ref)}')"><i class="fa-solid fa-file-pdf mr-1"></i>Save as PDF / Print</button><button type="button" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700" onclick="pmCopy(${k})"><i class="fa-solid fa-copy mr-1"></i>Copy summary</button><button type="button" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700" onclick="ldDownload('${escH(it.ref)}')"><i class="fa-solid fa-download mr-1"></i>Download file</button></div>
+<div class="space-y-1.5">${it.contacts.map((c, i) => `<div class="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5"><span class="text-xs text-slate-200"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>${escH(c.name || c.id)}</span><button type="button" onclick="pmGo(${k},${i})" class="${it.done.includes(i) ? 'bg-emerald-700' : 'bg-blue-600 hover:bg-blue-500'} text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">${it.done.includes(i) ? '✓ Opened — open again' : 'Share / open chat'}</button></div>`).join('')}</div>
+<div class="flex gap-2 justify-end"><button type="button" onclick="pmFinish(${k})" class="text-[11px] text-emerald-300 hover:text-emerald-200 font-semibold">Mark as sent</button><button type="button" onclick="pmDiscard(${k})" class="text-[11px] text-rose-300 hover:text-rose-200 font-semibold">Discard</button></div></div>`).join('');
+            ov.innerHTML = `<div class="bg-slate-900 border border-blue-500/50 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"><div class="p-4 border-b border-slate-800 flex items-center justify-between"><div class="text-sm font-bold text-white"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>Statement ready — send on Messenger</div><button type="button" onclick="document.getElementById('pm-modal').remove()" class="text-slate-400 hover:text-white text-xs font-semibold">Later</button></div><div class="p-4 space-y-3">${items}</div></div>`;
+            document.body.appendChild(ov);
+        },
+        pmCopy(k) { const it = pPending[k]; if (!it) return; navigator.clipboard.writeText(it.text).then(() => showToast('Summary copied — paste it into the chat.', 'success'), () => showToast('Browser blocked copying.', 'error')); },
+        async pmGo(k, i) {
+            const it = pPending[k]; if (!it) return; const c = it.contacts[i], rec = find(it.ref); if (!rec) { showToast('The ledger copy was deleted.', 'error'); return; }
+            let shared = false;
+            try {
+                const file = new File([rec.docHtml], it.ref + '.html', { type: 'text/html' });
+                if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ title: it.title, text: it.text, files: [file] }); shared = true; }
+            } catch (e) { if (e && e.name === 'AbortError') return; }
+            if (!shared) {
+                window.open('https://m.me/' + encodeURIComponent(c.id), '_blank');
+                try { await navigator.clipboard.writeText(it.text); } catch (e) {}
+                ldDownload(it.ref); showToast('Summary copied and file downloaded — paste and attach them in the chat that opened.', 'success');
+            }
+            if (!it.done.includes(i)) it.done.push(i); ppSave();
+            if (it.done.length >= it.contacts.length) { pmFinish(k, true); } else pmShow();
+        },
+        pmFinish(k, quiet) {
+            const it = pPending[k]; if (!it) return; const rec = find(it.ref);
+            if (rec) { rec.status = 'Sent'; HISTORY(rec, 'Sent by hand via personal Messenger to ' + it.contacts.map(c => c.name || c.id).join(', ')); ldPut(rec); }
+            try { logAccess('Statement sent via personal Messenger', it.ref + ' → ' + it.contacts.map(c => c.name || c.id).join(', ')); } catch (e) {}
+            pPending.splice(k, 1); ppSave(); pmPendingBtn(); const m = mq('pm-modal'); if (m) m.remove(); if (pPending.length) pmShow();
+            if (!quiet) showToast('Marked as sent in the ledger.', 'success');
+        },
+        pmDiscard(k) { const it = pPending[k]; if (!it || !confirm('Discard this waiting statement? (The ledger copy stays.)')) return; pPending.splice(k, 1); ppSave(); pmPendingBtn(); const m = mq('pm-modal'); if (m) m.remove(); if (pPending.length) pmShow(); }
+    });
+    function pmRenderScheds() {
+        const body = mq('pm-sched-body'); if (!body) return;
+        const rows = pScheds.filter(s => activeUserRole === 'Administrator' || s.owner === activeUser);
+        const bt = 'px-2 py-1 rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-[11px]';
+        body.innerHTML = rows.length ? rows.map(s => `<tr class="hover:bg-slate-800/40"><td class="p-3 whitespace-nowrap">@${escH(s.owner)}</td><td class="p-3 font-mono text-blue-300 whitespace-nowrap">${escH(s.time)}</td><td class="p-3">${escH(EM_PERIODS[s.period] || s.period)}</td><td class="p-3 max-w-[180px] truncate">${escH(s.contacts.map(c => c.name || c.id).join(', '))}</td><td class="p-3 max-w-[160px] truncate">${escH(s.sheetNames)}</td><td class="p-3 text-[11px] ${/^Failed/.test(s.lastStatus) ? 'text-rose-300' : 'text-emerald-300'}">${escH(s.lastStatus || '—')}${s.lastSent ? `<div class="text-slate-500">${escH(s.lastSent)}</div>` : ''}</td><td class="p-3 text-right whitespace-nowrap">${pmCan(s) ? `<button class="${bt}" onclick="pmRunNow('${s.id}')">Prepare now</button> <button class="${bt}" onclick="pmToggle('${s.id}',${!s.enabled})">${s.enabled ? 'Pause' : 'Resume'}</button> <button class="${bt} text-rose-300" onclick="pmDelete('${s.id}')">Delete</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="7" class="p-6 text-center text-slate-500">No daily alert saved yet.</td></tr>';
+    }
+    async function runPmSchedule(s, manual) {
+        const today = isoDate(new Date());
+        if (!manual) {
+            try { const fresh = (JSON.parse(localStorage.getItem(PS_KEY)) || []).find(x => x.id === s.id); if (fresh && fresh.lastDate === today) { s.lastDate = today; return; } } catch (e) {}
+            s.lastDate = today; psSave();
+        }
+        let P = null, err = '';
+        try { P = withSchedCtx(s, () => buildEmailPayload(computeStatement(), { to: [], subject: '', message: '' })); } catch (e) { err = e.message || String(e); }
+        const stamp = getLocalTimestamp();
+        if (!P) { s.lastStatus = 'Failed: ' + err; s.lastSent = stamp; psSave(); pmRenderScheds(); showToast('Messenger statement could not be prepared: ' + err, 'error'); return; }
+        s.lastStatus = 'Prepared — waiting for you to send'; s.lastSent = stamp; psSave(); pmRenderScheds();
+        try { withSchedCtx(s, () => logAccess('Personal-Messenger statement prepared' + (manual ? ' (manual)' : ' (scheduled)'), s.contacts.map(c => c.name || c.id).join(', '))); } catch (e) {}
+        await pmPrepare(P, s.contacts, s.message, s.notify, s);
+    }
+    let pmBusy = false;
+    async function checkPmSchedules() {
+        if (pmBusy) return;
+        const now = new Date(), today = isoDate(now), nowMin = now.getHours() * 60 + now.getMinutes();
+        for (const s of pScheds) {
+            if (!s.enabled || s.lastDate === today) continue;
+            const [h, m] = String(s.time).split(':').map(Number), at = h * 60 + m;
+            if (isNaN(at) || nowMin < at) continue;
+            if (!s.late && nowMin - at > 10) continue;
+            pmBusy = true; try { await runPmSchedule(s, false); } finally { pmBusy = false; }
+        }
+    }
+    setInterval(checkPmSchedules, 30000); setTimeout(checkPmSchedules, 7000);
+    const _swP = switchTab; switchTab = function (t) { const r = _swP.apply(this, arguments); if (t === 'statement') { mountPersonal(); pmLoadForm(); pmRcpts(); pmRenderScheds(); pmPendingBtn(); } return r; };
+
+
+    // =================================================================== PERSONAL MESSENGER v2: reliable chat links + statement PICTURE
+    const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const pmImgs = {};
+    function pmLink(id, mode) {
+        const o = mode || pf.open || (IS_MOBILE ? 'mme' : 'messenger'), e = encodeURIComponent(id);
+        return o === 'facebook' ? 'https://www.facebook.com/messages/t/' + e : o === 'mme' ? 'https://m.me/' + e : 'https://www.messenger.com/t/' + e;
+    }
+    async function pmMakeImage(ref) {
+        if (pmImgs[ref]) return pmImgs[ref];
+        const rec = find(ref); if (!rec) return null;
+        try {
+            const landscape = /size:A4 landscape/.test(rec.docHtml), W = landscape ? 1123 : 794, MAXH = landscape ? 794 : 1300;
+            const fr = document.createElement('iframe'); fr.style.cssText = `position:fixed;left:-99999px;top:0;width:${W}px;height:600px;border:0`; document.body.appendChild(fr);
+            await new Promise(res => { fr.onload = res; fr.srcdoc = rec.docHtml; });
+            const H = Math.min(MAXH, Math.max(300, fr.contentDocument.documentElement.scrollHeight)); fr.remove();
+            const doc = new DOMParser().parseFromString(rec.docHtml, 'text/html');
+            const css = [...doc.querySelectorAll('style')].map(s => s.textContent).join('\n').replace(/@page\s*\{[^}]*\}/g, '');
+            doc.body.querySelectorAll('script,select,button').forEach(n => n.remove());
+            const inner = [...doc.body.childNodes].map(n => new XMLSerializer().serializeToString(n)).join('');
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject x="0" y="0" width="${W}" height="${H}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;overflow:hidden;background:#fff;font-family:Arial,Helvetica,sans-serif"><style>/*<![CDATA[*/${css}/*]]>*/</style>${inner}</div></foreignObject></svg>`;
+            const img = new Image(); await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+            const cv = document.createElement('canvas'); cv.width = W * 2; cv.height = H * 2; const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.scale(2, 2); cx.drawImage(img, 0, 0);
+            const blob = await new Promise(res => cv.toBlob(res, 'image/png')); if (!blob) return null;
+            return (pmImgs[ref] = { blob, url: URL.createObjectURL(blob) });
+        } catch (e) { console.warn('Statement picture failed', e); return null; }
+    }
+    const pmBtn = 'bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700';
+    async function pmCopyText(text, okMsg) { try { await navigator.clipboard.writeText(text); showToast(okMsg, 'success'); return true; } catch (e) { showToast('The browser blocked copying — select the text in the pop-up and copy it by hand.', 'error'); return false; } }
+    Object.assign(window, {
+        pmShow() {
+            const old = mq('pm-modal'); if (old) old.remove(); if (!pPending.length) { pmPendingBtn(); return; }
+            const ov = document.createElement('div'); ov.id = 'pm-modal'; ov.className = 'fixed inset-0 z-[210] bg-black/70 flex items-center justify-center p-3';
+            const items = pPending.map((it, k) => `<div class="bg-slate-950 border border-slate-700 rounded-xl p-3 space-y-2.5">
+<div><div class="text-xs font-bold text-white">${escH(it.title)}</div><div class="text-[10px] text-slate-400">Ledger ${escH(it.ref)} · prepared ${escH(it.when)}</div></div>
+<div class="text-[11px] text-amber-200 bg-amber-950/30 border border-amber-800/50 rounded-lg p-2.5 leading-relaxed"><b>${IS_MOBILE ? 'On your phone:' : 'On your computer:'}</b> ${IS_MOBILE ? '1) tap <b>Share to Messenger</b> beside the person, 2) choose Messenger → the person → Send.' : '1) tap <b>Open chat</b> beside the person (the statement picture is copied automatically), 2) click the message box in the chat, 3) press <b>Ctrl+V</b> and <b>Enter</b>.'}</div>
+<div id="pm-prev-${k}" class="bg-slate-900 border border-slate-800 rounded-lg p-2 text-center text-[11px] text-slate-500 max-h-56 overflow-y-auto"><i class="fa-solid fa-spinner fa-spin"></i> Preparing the statement picture…</div>
+<div class="flex flex-wrap gap-1.5"><button type="button" class="${pmBtn}" onclick="pmCopyPic(${k})"><i class="fa-solid fa-image mr-1"></i>Copy picture</button><button type="button" class="${pmBtn}" onclick="pmCopy(${k})"><i class="fa-solid fa-copy mr-1"></i>Copy text summary</button><button type="button" class="${pmBtn}" onclick="ldReprint('${escH(it.ref)}')"><i class="fa-solid fa-file-pdf mr-1"></i>Save as PDF / Print</button><button type="button" class="${pmBtn}" onclick="ldDownload('${escH(it.ref)}')"><i class="fa-solid fa-download mr-1"></i>Download file</button></div>
+<div class="space-y-1.5">${it.contacts.map((c, i) => `<div class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-2"><div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-200"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>${escH(c.name || c.id)}</span><button type="button" onclick="pmGo(${k},${i})" class="${it.done.includes(i) ? 'bg-emerald-700' : 'bg-blue-600 hover:bg-blue-500'} text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">${IS_MOBILE ? 'Share to Messenger' : 'Open chat'}${it.done.includes(i) ? ' ✓' : ''}</button></div><div class="text-[10px] text-slate-500 mt-1">Chat not opening? Try: <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'messenger')}">Messenger.com</a> · <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'facebook')}">Facebook</a> · <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'mme')}">m.me</a> — or just open Messenger and search “${escH(c.name || c.id)}”.</div></div>`).join('')}</div>
+<div class="flex gap-3 justify-end"><button type="button" onclick="pmFinish(${k})" class="text-[11px] text-emerald-300 hover:text-emerald-200 font-semibold">I sent it — mark as sent</button><button type="button" onclick="pmDiscard(${k})" class="text-[11px] text-rose-300 hover:text-rose-200 font-semibold">Discard</button></div></div>`).join('');
+            ov.innerHTML = `<div class="bg-slate-900 border border-blue-500/50 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto"><div class="p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-900"><div class="text-sm font-bold text-white"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>Statement ready — send on Messenger</div><button type="button" onclick="document.getElementById('pm-modal').remove()" class="text-slate-400 hover:text-white text-xs font-semibold">Later</button></div><div class="p-4 space-y-3">${items}</div></div>`;
+            document.body.appendChild(ov);
+            pPending.forEach(async (it, k) => {
+                const im = await pmMakeImage(it.ref), box = mq('pm-prev-' + k); if (!box) return;
+                box.innerHTML = im ? `<img src="${im.url}" alt="Statement" class="w-full rounded border border-slate-700 bg-white"><div class="text-[10px] text-slate-500 mt-1">Page 1 of the statement. Computer: right-click → Copy image. Phone: press and hold → Save image. Use <b>Save as PDF</b> to send every page.</div>` : '<span class="text-amber-300">A picture could not be made in this browser — use <b>Copy text summary</b> or <b>Save as PDF</b>.</span>';
+            });
+        },
+        async pmCopyPic(k) {
+            const it = pPending[k]; if (!it) return; const im = await pmMakeImage(it.ref);
+            if (!im) { await pmCopyText(it.text, 'No picture available here — text summary copied instead.'); return; }
+            try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': im.blob })]); showToast('Statement picture copied — paste it into the chat with Ctrl+V.', 'success'); }
+            catch (e) { showToast('The browser blocked copying the picture — right-click the picture in the pop-up and choose Copy image.', 'error'); }
+        },
+        async pmGo(k, i) {
+            const it = pPending[k]; if (!it) return; const c = it.contacts[i], rec = find(it.ref); if (!rec) { showToast('The ledger copy was deleted.', 'error'); return; }
+            const im = pmImgs[it.ref] || null;
+            const mark = () => { if (!it.done.includes(i)) it.done.push(i); ppSave(); if (it.done.length >= it.contacts.length) pmFinish(k, true); else pmShow(); };
+            if (IS_MOBILE && navigator.canShare) {
+                try {
+                    const files = [im ? new File([im.blob], it.ref + '.png', { type: 'image/png' }) : new File([rec.docHtml], it.ref + '.html', { type: 'text/html' })];
+                    if (navigator.canShare({ files })) { await navigator.share({ title: it.title, text: it.text, files }); mark(); return; }
+                } catch (e) { if (e && e.name === 'AbortError') return; }
+            }
+            // computer (or no share sheet): copy the picture FIRST (needs focus), then open the chat in a new tab
+            if (im && navigator.clipboard && window.ClipboardItem) {
+                navigator.clipboard.write([new ClipboardItem({ 'image/png': im.blob })]).then(() => showToast('Statement picture copied — click the message box in the chat and press Ctrl+V.', 'success'), () => { navigator.clipboard.writeText(it.text).catch(() => {}); showToast('Picture could not be copied; text summary copied instead — paste it in the chat.', 'error'); });
+            } else if (navigator.clipboard) { navigator.clipboard.writeText(it.text).then(() => showToast('Text summary copied — paste it in the chat.', 'success'), () => {}); }
+            window.open(pmLink(c.id), '_blank');
+            mark();
+        }
+    });
+
+    mountPivotCard(); mountLedger(); mountMessenger(); mountPersonal(); ldLoad();
 })();
 </script>
 </body>
