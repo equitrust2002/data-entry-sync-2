@@ -1151,7 +1151,7 @@
 // Ledger tabs: one tab per Data Entry Sheet. Hidden helper tabs: _Config (shared settings) and _AdminLog (change log).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
 const EMAIL_TOKEN = 'ULLSWATER-CORP-SECURE-9021';
-const SCRIPT_VERSION = 6;
+const SCRIPT_VERSION = 8;
 // ===== FACEBOOK MESSENGER (optional) - paste your Facebook PAGE ACCESS TOKEN between the quotes =====
 const FB_PAGE_TOKEN = '';
 const FB_API = 'https://graph.facebook.com/v21.0';
@@ -1208,7 +1208,10 @@ function doPost(e) {
       if (prev &amp;&amp; JSON.parse(prev).status === 'sent') return J_(JSON.parse(prev));
       try {
         const opts = { to: String(d.to || ''), subject: String(d.subject || 'Statement of Account'), htmlBody: String(d.html || ''), name: 'Ullswater Fleet Hub' };
-        try { opts.attachments = [Utilities.newBlob(String(d.pdfHtml || d.html), 'text/html', 'Statement.html').getAs('application/pdf').setName(String(d.fileName || 'Statement.pdf'))]; } catch (pe) {}
+        const files = (d.files &amp;&amp; d.files.length) ? d.files : [{ name: String(d.fileName || 'Statement.pdf'), html: String(d.pdfHtml || d.html) }];
+        opts.attachments = [];
+        files.forEach(function (f) { try { opts.attachments.push(Utilities.newBlob(String(f.html), 'text/html', 'Statement.html').getAs('application/pdf').setName(String(f.name || 'Statement.pdf'))); } catch (pe) {} });
+        if (d.images &amp;&amp; d.images.length) { opts.inlineImages = {}; d.images.forEach(function (im) { try { opts.inlineImages[String(im.cid)] = Utilities.newBlob(Utilities.base64Decode(String(im.b64)), 'image/png', String(im.cid) + '.png'); } catch (ie) {} }); }
         MailApp.sendEmail(opts);
         return done({ status: 'sent', emailed: opts.to, remaining: MailApp.getRemainingDailyQuota() });
       } catch (me) { return done({ status: 'failed', error: String(me) }); }
@@ -3711,26 +3714,26 @@ ${A.add ? `<tr class="bg-slate-800/40"><td class="p-2.5 font-semibold text-slate
             return `
 <div class="soa">
   <div class="hd"><div><div class="co">ULLSWATER CORPORATION</div><div class="cosub">Fleet Operations &amp; Hauling</div></div><div class="ttl"><div class="t1">STATEMENT OF ACCOUNT</div><div class="t2">${escH(stmtNo)}</div></div></div>
-  <table class="meta"><tr><td><b>${escH(unitL)}</b></td><td>${escH(unitLabel)}</td><td><b>Coverage</b></td><td>${S.from ? fmtDate(S.from) : 'Start'} – ${S.to ? fmtDate(S.to) : 'Present'}</td></tr>
+  <!--META--><table class="meta"><tr><td><b>${escH(unitL)}</b></td><td>${escH(unitLabel)}</td><td><b>Coverage</b></td><td>${S.from ? fmtDate(S.from) : 'Start'} – ${S.to ? fmtDate(S.to) : 'Present'}</td></tr>
   <tr><td><b>Billed To</b></td><td>${escH(c.billedTo) || '—'}</td><td><b>Date Issued</b></td><td>${fmtDate(isoDate(new Date()))}</td></tr>
   <tr><td><b>Project / Site</b></td><td>${escH(c.project) || '—'}</td><td><b>Prepared By</b></td><td>${escH(cur)}</td></tr>
-  <tr><td><b>Data Entry Sheet</b></td><td>${escH(sheetName)}</td><td><b>Mapped Unit Field</b></td><td>${escH(stmtCfg.unitField)}</td></tr></table>
+  <tr><td><b>Data Entry Sheet</b></td><td>${escH(sheetName)}</td><td><b>Mapped Unit Field</b></td><td>${escH(stmtCfg.unitField)}</td></tr></table><!--/META-->
 
-  <div class="sec">Account Summary</div>
+  <!--SUM--><div class="sec">Account Summary</div>
   <table class="grid summary">${summaryColgroup}<thead><tr><th>${escH(unitL)}</th><th class="num">Transactions</th><th class="num">Actual ${escH(amtL)}</th><th class="num">Target Amount</th><th class="num">Difference</th></tr></thead><tbody>${summaryRows || '<tr><td colspan="5" class="empty">No transactions in this coverage.</td></tr>'}</tbody>
   <tfoot><tr><td>TOTAL</td>${col(S.tx)}${col(fmtMoney(S.amt))}${col(S.hasTarget ? fmtMoney(S.tgt) : '—')}${col(S.diff == null ? '—' : fmtDiff(S.diff))}</tr></tfoot></table>
-  <div class="note">Actual Amount is net of any items marked as deductions. Difference = Actual Amount − Target Amount. A positive figure is over target; a negative figure is under target.${S.voided ? ` ${S.voided} voided ticket${S.voided === 1 ? '' : 's'} excluded.` : ''}</div>
+  <div class="note">Actual Amount is net of any items marked as deductions. Difference = Actual Amount − Target Amount. A positive figure is over target; a negative figure is under target.${S.voided ? ` ${S.voided} voided ticket${S.voided === 1 ? '' : 's'} excluded.` : ''}</div><!--/SUM-->
 
   <!--TXD--><div class="sec">Transaction Details</div>
   <table class="grid detail">${detailColgroup}<thead><tr>${detailHead}</tr></thead><tbody>${detail || `<tr><td colspan="${nC}" class="empty">No transactions in this coverage.</td></tr>`}</tbody>
   <tfoot><tr><td colspan="${nC - 1}" class="a-r">${S.nDed ? 'NET GRAND TOTAL' : 'GRAND TOTAL'}</td><td class="a-r">${S.amt < 0 ? '(' + fmtMoney(-S.amt) + ')' : fmtMoney(S.amt)}</td></tr></tfoot></table><!--/TXD-->
   ${S.nDed ? `<table class="meta" style="margin-top:6px"><tr><td><b>Total Additional</b></td><td style="text-align:right">${fmtMoney(S.addT)}</td><td><b>Total Deductions</b></td><td style="text-align:right">(${fmtMoney(S.dedT)})</td><td><b>Net Total</b></td><td style="text-align:right"><b>${fmtMoney(S.amt)}</b></td></tr></table>` : ''}
 
-  ${S.adj.active ? buildReceiptHtml(S) : ''}
+  <!--RCPT-->${S.adj.active ? buildReceiptHtml(S) : ''}<!--/RCPT-->
 
-  ${c.remarks ? `<div class="sec">Remarks</div><div class="remarks">${escH(c.remarks).replace(/\n/g, '<br>')}</div>` : ''}
+  <!--REM-->${c.remarks ? `<div class="sec">Remarks</div><div class="remarks">${escH(c.remarks).replace(/\n/g, '<br>')}</div>` : ''}<!--/REM-->
 
-  <div class="sigs">${sig('Reviewed by', c.revName, c.revRole)}${sig('Approved by', c.appName, c.appRole)}${sig('Verified by', c.verName, c.verRole)}</div>
+  <!--SIG--><div class="sigs">${sig('Reviewed by', c.revName, c.revRole)}${sig('Approved by', c.appName, c.appRole)}${sig('Verified by', c.verName, c.verRole)}</div><!--/SIG-->
   <div class="foot">System-generated statement · Ullswater Fleet Hub · ${getLocalTimestamp()}</div>
 </div>`;
         }
@@ -3788,8 +3791,9 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
 .soa .foot{margin-top:22px;border-top:1px solid #ccc;padding-top:5px;text-align:center;font-size:8.5px;color:#888}
 .soa tr{page-break-inside:avoid}
 .soa .pv{table-layout:auto;font-size:10px}.soa .pv th{white-space:normal}.soa .pv td.pvl{font-weight:600;color:#0f2a4a}
-.soa .pv tr.pvsub td{background:#f1f4f8;font-weight:700;border-top:1px solid #9aa8ba}
-.soa .pv tr.pvtot td{background:#0f2a4a;color:#fff;font-weight:800}
+.soa .pv tr.pvsub td{background:#f1f4f8!important;font-weight:700;border-top:1px solid #9aa8ba}
+.soa .pv tr.pvtot td{background:#0f2a4a!important;color:#fff!important;font-weight:800}
+.soa .pv tr.pvtot td.pvl{color:#fff}
 .soa .pv tr.pvsub td,.soa .pv tr.pvtot td{-webkit-print-color-adjust:exact;print-color-adjust:exact}`;
 
         // inject the same stylesheet into the live preview
@@ -5819,9 +5823,9 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
         } catch (e) { showToast('Allow pop-ups for this page, then try again', 'error'); }
     }
     function buildPrintPage(S, ref) {
-        const P = pvCfg(), size = (P.layout !== 'standard' && P.landscape) ? 'A4 landscape' : 'A4';
-        const doc = buildStatementDocHtml(S, true).split('System-generated statement ·').join('Ledger Ref ' + ref + ' · System-generated statement ·');
-        return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Statement of Account ${ref}</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>@page{size:${size};margin:10mm}body{margin:0;background:#fff}${STMT_CSS}.soa{padding:0}</style></head><body>${doc}</body></html>`;
+        const P = pvCfg(), size = ((P.layout !== 'standard' && P.landscape) || dcCfg().orientation === 'landscape') ? 'A4 landscape' : 'A4';
+        const doc = buildStatementDocHtml(S, true).split('<div class="foot">').join('<div class="foot">Ledger Ref ' + ref + ' · ');
+        return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escH(titleCase(dcCfg().title))} ${ref}</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>@page{size:${size};margin:10mm}body{margin:0;background:#fff}${STMT_CSS}.soa{padding:0}</style></head><body>${doc}</body></html>`;
     }
 
     // ---- PRINT: archive first, then print
@@ -5840,10 +5844,12 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
         const P = _bep.call(this, S, o);
         try {
             const ref = ldNextRef(), lay = pvLayout(), pv = pvCfg();
-            const stamp = h => String(h).split('System-generated statement ·').join('Ledger Ref ' + ref + ' · System-generated statement ·');
+            const stamp = h => String(h).split('<div class="foot">').join('<div class="foot">Ledger Ref ' + ref + ' · ');
             P.html = stamp(P.html).replace('Dashboard Summary</h2>', () => 'Dashboard Summary</h2><div style="font-size:11px;color:#64748b;margin-bottom:4px">Ledger Ref: ' + ref + '</div>');
             P.pdfHtml = stamp(P.pdfHtml);
-            if (lay !== 'standard' && pv.landscape) P.pdfHtml = P.pdfHtml.replace('@page{size:A4;margin:10mm}', '@page{size:A4 landscape;margin:10mm}');
+            if ((lay !== 'standard' && pv.landscape) || dcCfg().orientation === 'landscape') P.pdfHtml = P.pdfHtml.replace('@page{size:A4;margin:10mm}', '@page{size:A4 landscape;margin:10mm}');
+            { const tt = titleCase(dcCfg().title); if (tt !== 'Statement Of Account') { P.subject = String(P.subject).replace('Statement of Account', tt); P.text = String(P.text || '').replace('Statement of Account', tt); } }
+            if (P.html.split(SUMSPLIT).length === 2) P.html = P.html.replace(SUMSPLIT, SUMSPLIT + '<!--DOC-->') + '<!--/DOC-->';
             P.text = (P.text || '') + '\nLedger Ref: ' + ref;
             P.meta = { ref, by: activeUser, from: S.from, toDate: S.to, sheets: emSheetNames(), units: S.chosen.length, tx: S.tx, net: netOf(S), layout: lay, cfg: JSON.stringify(stmtCfg) };
         } catch (e) { console.error(e); }
@@ -5856,9 +5862,25 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
         const rec = ldMake({ ref: m.ref, action: (opt && opt.action) || (sched ? 'Scheduled email' : 'Emailed'), status: (opt && opt.status) || (r.ok ? 'Sent' : 'Failed'), error: r.ok ? '' : (r.msg || ''), by: m.by, byName: nameOf(m.by), to: P.to, subject: P.subject, from: m.from, toDate: m.toDate, sheets: m.sheets, units: m.units, tx: m.tx, net: m.net, layout: m.layout, docHtml: P.pdfHtml, emailHtml: P.html, text: P.text, cfg: m.cfg, emId: P.id || '' });
         await ldPut(rec);
     }
+    const toB64 = blob => new Promise(res => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); });
+    const LONGBANNER = '<div style="background:#fff7ed;border:1px solid #fdba74;padding:8px 10px;font:12px Arial,sans-serif;color:#7c2d12;margin-bottom:10px">This statement is long. If your mail app shows “Message clipped”, press <b>View entire message</b> — or open the attached <b>PDF</b>, which always contains the whole document.</div>';
+    async function emailImages(payload) {
+        const html = String(payload.html || ''); if (!html.includes('<!--DOC-->')) return;
+        const strip = h => { h = h.replace(/<!--DOC-->|<!--\/DOC-->/g, ''); return h.length > 95000 ? LONGBANNER + h : h; };
+        const docs = (payload.files && payload.files.length) ? payload.files.map(f => f.html) : [payload.pdfHtml], blocks = html.match(/<!--DOC-->[\s\S]*?<!--\/DOC-->/g) || [];
+        if (blocks.length !== docs.length || (await dsScriptVersion()) < 8) { payload.html = strip(html); return; }
+        const images = [], tags = [];
+        for (let i = 0; i < docs.length; i++) {
+            const im = await docToImages(docs[i]); if (!im) { payload.html = strip(html); return; }
+            let t = ''; for (let j = 0; j < im.parts.length; j++) { const cid = 'stmt' + i + '_' + j; images.push({ cid, b64: await toB64(im.parts[j].blob) }); t += `<img src="cid:${cid}" alt="Statement" style="display:block;width:100%;max-width:800px;height:auto;border:1px solid #d6dbe3;margin:6px 0">`; }
+            tags.push(t);
+        }
+        let k = 0; payload.html = html.replace(/<!--DOC-->[\s\S]*?<!--\/DOC-->/g, () => tags[k++]); payload.images = images;
+    }
     const _pe = postEmail;
     postEmail = async function (payload) {
         const meta = payload && payload.meta, clean = meta ? Object.assign({}, payload) : payload; if (meta) delete clean.meta;
+        try { await emailImages(clean); } catch (e) { console.error('Email pictures', e); }
         const r = await _pe.call(this, clean);
         if (meta) { try { await saveFromEmail(payload, r); } catch (e) { console.error(e); } }
         return r;
@@ -6419,19 +6441,17 @@ ${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class=
         const o = mode || pf.open || (IS_MOBILE ? 'mme' : 'messenger'), e = encodeURIComponent(id);
         return o === 'facebook' ? 'https://www.facebook.com/messages/t/' + e : o === 'mme' ? 'https://m.me/' + e : 'https://www.messenger.com/t/' + e;
     }
-    async function pmMakeImage(ref) {
-        if (pmImgs[ref]) return pmImgs[ref];
-        const rec = find(ref); if (!rec) return null;
+    async function docToImages(docHtml) {
         try {
-            const landscape = /size:A4 landscape/.test(rec.docHtml), W = landscape ? 1123 : 794;
+            const landscape = /size:A4 landscape/.test(docHtml), W = landscape ? 1123 : 794;
             const fr = document.createElement('iframe'); fr.style.cssText = `position:fixed;left:-99999px;top:0;width:${W}px;height:600px;border:0`; document.body.appendChild(fr);
-            await new Promise(res => { fr.onload = res; fr.srcdoc = rec.docHtml; });
+            await new Promise(res => { fr.onload = res; fr.srcdoc = docHtml; });
             const H = Math.max(300, Math.ceil(fr.contentDocument.documentElement.scrollHeight)); fr.remove();
-            const doc = new DOMParser().parseFromString(rec.docHtml, 'text/html');
+            const doc = new DOMParser().parseFromString(docHtml, 'text/html');
             const css = [...doc.querySelectorAll('style')].map(x => x.textContent).join('\n').replace(/@page\s*\{[^}]*\}/g, '');
             doc.body.querySelectorAll('script,select,button').forEach(n => n.remove());
             const inner = [...doc.body.childNodes].map(n => new XMLSerializer().serializeToString(n)).join('');
-            const MAXPX = 15000;                                   // browsers cannot draw a canvas taller than ~16000px
+            const MAXPX = 30000;                                   // one single tall picture up to ~25 A4 pages (browser canvas limit ~32000px)
             const scale = Math.min(2, MAXPX / H);
             const single = scale >= 1, chunk = single ? H : 12000, scl = single ? scale : 1, parts = [];
             for (let off = 0; off < H; off += chunk) {
@@ -6443,8 +6463,27 @@ ${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class=
                 const blob = await new Promise(res => cv.toBlob(res, 'image/png')); if (!blob) return null;
                 parts.push({ blob, url: URL.createObjectURL(blob) });
             }
-            return (pmImgs[ref] = { parts, blob: parts[0].blob, url: parts[0].url, pages: Math.max(1, Math.round(H / (landscape ? 794 : 1123))) });
+            return { parts, blob: parts[0].blob, url: parts[0].url, pages: Math.max(1, Math.round(H / (landscape ? 794 : 1123))) };
         } catch (e) { console.warn('Statement picture failed', e); return null; }
+    }
+    async function pmMakeImage(ref) {
+        if (pmImgs[ref]) return pmImgs[ref];
+        const rec = find(ref); if (!rec) return null;
+        const im = await docToImages(rec.docHtml); return im ? (pmImgs[ref] = im) : null;
+    }
+    const pmTexts = {};
+    async function pmFullText(ref) {
+        if (pmTexts[ref]) return pmTexts[ref];
+        const rec = find(ref); if (!rec) return [''];
+        const fr = document.createElement('iframe'); fr.style.cssText = 'position:fixed;left:-99999px;top:0;width:900px;height:600px;border:0'; document.body.appendChild(fr);
+        await new Promise(res => { fr.onload = res; fr.srcdoc = rec.docHtml; });
+        const d = fr.contentDocument; d.querySelectorAll('script,style').forEach(n => n.remove());
+        let t = d.body.innerText || ''; fr.remove();
+        t = t.replace(/\t/g, '  |  ').replace(/[ \u00a0]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        const LIM = 18000, parts = []; let cur = '';
+        t.split('\n').forEach(line => { if (cur && (cur + line + '\n').length > LIM) { parts.push(cur.trim()); cur = ''; } cur += line + '\n'; });
+        if (cur.trim()) parts.push(cur.trim());
+        return (pmTexts[ref] = parts.length ? parts : ['']);
     }
     const pmBtn = 'bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700';
     async function pmCopyText(text, okMsg) { try { await navigator.clipboard.writeText(text); showToast(okMsg, 'success'); return true; } catch (e) { showToast('The browser blocked copying — select the text in the pop-up and copy it by hand.', 'error'); return false; } }
@@ -6454,17 +6493,22 @@ ${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class=
             const ov = document.createElement('div'); ov.id = 'pm-modal'; ov.className = 'fixed inset-0 z-[210] bg-black/70 flex items-center justify-center p-3';
             const items = pPending.map((it, k) => `<div class="bg-slate-950 border border-slate-700 rounded-xl p-3 space-y-2.5">
 <div><div class="text-xs font-bold text-white">${escH(it.title)}</div><div class="text-[10px] text-slate-400">Ledger ${escH(it.ref)} · prepared ${escH(it.when)}</div></div>
-<div class="text-[11px] text-amber-200 bg-amber-950/30 border border-amber-800/50 rounded-lg p-2.5 leading-relaxed"><b>${IS_MOBILE ? 'On your phone:' : 'On your computer:'}</b> ${IS_MOBILE ? '1) tap <b>Share to Messenger</b> beside the person, 2) choose Messenger → the person → Send.' : '1) tap <b>Open chat</b> beside the person (the whole-statement picture is copied automatically), 2) click the message box in the chat, 3) press <b>Ctrl+V</b> and <b>Enter</b>.'}</div>
+<div class="text-[11px] text-amber-200 bg-amber-950/30 border border-amber-800/50 rounded-lg p-2.5 leading-relaxed"><b>${IS_MOBILE ? 'On your phone:' : 'On your computer:'}</b> ${IS_MOBILE ? '1) tap <b>Share to Messenger</b> beside the person, 2) choose Messenger → the person → Send.' : '1) tap <b>Open chat</b> beside the person (the whole-statement picture is copied automatically), 2) click the message box in the chat, 3) press <b>Ctrl+V</b> and <b>Enter</b>. (Prefer text? Press <b>Copy WHOLE statement as text</b> first.)'}</div>
 <div id="pm-prev-${k}" class="bg-slate-900 border border-slate-800 rounded-lg p-2 text-center text-[11px] text-slate-500 max-h-64 overflow-y-auto"><i class="fa-solid fa-spinner fa-spin"></i> Preparing the statement picture…</div>
-<div class="flex flex-wrap gap-1.5"><button type="button" class="${pmBtn}" onclick="pmCopyPic(${k})"><i class="fa-solid fa-image mr-1"></i>Copy whole-statement picture</button><span id="pm-parts-${k}" class="contents"></span><button type="button" class="${pmBtn}" onclick="pmCopy(${k})"><i class="fa-solid fa-copy mr-1"></i>Copy text summary</button><button type="button" class="${pmBtn}" onclick="ldReprint('${escH(it.ref)}')"><i class="fa-solid fa-file-pdf mr-1"></i>Save as PDF / Print</button><button type="button" class="${pmBtn}" onclick="ldDownload('${escH(it.ref)}')"><i class="fa-solid fa-download mr-1"></i>Download file</button></div>
+<div class="flex flex-wrap gap-1.5"><button type="button" class="${pmBtn}" onclick="pmCopyPic(${k})"><i class="fa-solid fa-image mr-1"></i>Copy whole-statement picture</button><span id="pm-parts-${k}" class="contents"></span><button type="button" class="${pmBtn}" onclick="pmCopy(${k})"><i class="fa-solid fa-copy mr-1"></i>Copy text summary</button><button type="button" class="${pmBtn}" onclick="pmCopyFull(${k})"><i class="fa-solid fa-align-left mr-1"></i>Copy WHOLE statement as text</button><button type="button" class="${pmBtn}" onclick="ldReprint('${escH(it.ref)}')"><i class="fa-solid fa-file-pdf mr-1"></i>Save as PDF / Print</button><button type="button" class="${pmBtn}" onclick="ldDownload('${escH(it.ref)}')"><i class="fa-solid fa-download mr-1"></i>Download file</button></div>
 <div class="space-y-1.5">${it.contacts.map((c, i) => `<div class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-2"><div class="flex items-center justify-between gap-2"><span class="text-xs text-slate-200"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>${escH(c.name || c.id)}</span><button type="button" onclick="pmGo(${k},${i})" class="${it.done.includes(i) ? 'bg-emerald-700' : 'bg-blue-600 hover:bg-blue-500'} text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">${IS_MOBILE ? 'Share to Messenger' : 'Open chat'}${it.done.includes(i) ? ' ✓' : ''}</button></div><div class="text-[10px] text-slate-500 mt-1">Chat not opening? Try: <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'messenger')}">Messenger.com</a> · <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'facebook')}">Facebook</a> · <a class="text-blue-300 underline" target="_blank" rel="noopener" href="${pmLink(c.id, 'mme')}">m.me</a> — or just open Messenger and search “${escH(c.name || c.id)}”.</div></div>`).join('')}</div>
 <div class="flex gap-3 justify-end"><button type="button" onclick="pmFinish(${k})" class="text-[11px] text-emerald-300 hover:text-emerald-200 font-semibold">I sent it — mark as sent</button><button type="button" onclick="pmDiscard(${k})" class="text-[11px] text-rose-300 hover:text-rose-200 font-semibold">Discard</button></div></div>`).join('');
-            ov.innerHTML = `<div class="bg-slate-900 border border-blue-500/50 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto"><div class="p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-900"><div class="text-sm font-bold text-white"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>Statement ready — send on Messenger</div><button type="button" onclick="document.getElementById('pm-modal').remove()" class="text-slate-400 hover:text-white text-xs font-semibold">Later</button></div><div class="p-4 space-y-3">${items}</div></div>`;
+            ov.innerHTML = `<div class="bg-slate-900 border border-blue-500/50 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto"><div class="p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-900"><div class="text-sm font-bold text-white"><i class="fa-brands fa-facebook-messenger text-blue-400 mr-1.5"></i>Statement ready — send on Messenger</div><button type="button" onclick="document.getElementById('pm-modal').remove()" class="text-slate-400 hover:text-white text-xs font-semibold">Later</button></div><div class="p-4 space-y-3">${pPending.length > 1 && IS_MOBILE ? '<button type="button" onclick="pmShareAll()" class="w-full bg-blue-600 text-white text-xs font-semibold py-2 rounded-lg">Share ALL ' + pPending.length + ' statements at once</button>' : ''}${items}</div></div>`;
             document.body.appendChild(ov);
             pPending.forEach(async (it, k) => {
                 const im = await pmMakeImage(it.ref), box = mq('pm-prev-' + k); if (!box) return; const pb = mq('pm-parts-' + k); if (pb && im && im.parts.length > 1) pb.innerHTML = im.parts.map((_, n) => `<button type="button" class="${pmBtn}" onclick="pmCopyPic(${k},${n})">Copy part ${n + 1}/${im.parts.length}</button>`).join('');
                 box.innerHTML = im ? `${im.parts.map(pt => `<img src="${pt.url}" alt="Statement" class="w-full rounded border border-slate-700 bg-white mb-1">`).join('')}<div class="text-[10px] text-slate-500 mt-1">The WHOLE statement (about ${im.pages} page${im.pages > 1 ? 's' : ''}) as ${im.parts.length > 1 ? im.parts.length + ' pictures' : 'one picture'}. Computer: right-click → Copy image. Phone: press and hold → Save image.</div>` : '<span class="text-amber-300">A picture could not be made in this browser — use <b>Copy text summary</b> or <b>Save as PDF</b>.</span>';
             });
+        },
+        async pmCopyFull(k) {
+            const it = pPending[k]; if (!it) return; const parts = await pmFullText(it.ref), i = (it.fi || 0) % parts.length;
+            try { await navigator.clipboard.writeText(parts[i]); it.fi = i + 1; showToast(parts.length > 1 ? `Part ${i + 1} of ${parts.length} copied — paste it in the chat, then press this button again for part ${(i + 1) % parts.length + 1}.` : 'The whole statement was copied as text — paste it into the chat.', 'success'); }
+            catch (e) { showToast('The browser blocked copying — use the picture instead (right-click → Copy image).', 'error'); }
         },
         async pmCopyPic(k, n) {
             const it = pPending[k]; if (!it) return; const im = await pmMakeImage(it.ref), idx = n || 0;
@@ -6491,7 +6535,322 @@ ${cur ? `<div class="flex gap-1.5 items-center"><select id="map-copy-src" class=
         }
     });
 
-    mountPivotCard(); mountLedger(); mountMessenger(); mountPersonal(); ldLoad();
+
+    // =================================================================== STATEMENT DESIGNS & SETS (several predesigned statements -> Print / Email / Messenger)
+    const DS_KEY = 'ullswater_stmt_designs', DSET_KEY = 'ullswater_stmt_sets', DSEL_KEY = 'ullswater_stmt_dssel';
+    let dsList = [], dsSets = [], dsSel = new Set(), dsOpen = {};
+    try { dsList = JSON.parse(localStorage.getItem(DS_KEY)) || []; } catch (e) {}
+    try { dsSets = JSON.parse(localStorage.getItem(DSET_KEY)) || []; } catch (e) {}
+    try { dsSel = new Set(JSON.parse(localStorage.getItem(DSEL_KEY)) || []); } catch (e) {}
+    const dsPersist = () => { try { localStorage.setItem(DS_KEY, JSON.stringify(dsList)); localStorage.setItem(DSET_KEY, JSON.stringify(dsSets)); localStorage.setItem(DSEL_KEY, JSON.stringify([...dsSel])); } catch (e) { showToast('Could not save designs (browser storage full).', 'error'); } };
+    const dsMine = () => dsList.filter(d => activeUserRole === 'Administrator' || d.owner === activeUser);
+    const dsById = id => dsList.find(d => d.id === id);
+    const DS_PERIODS = Object.assign({ screen: 'Dates on the dashboard (when sending)', custom: 'Fixed dates (as set now)' }, EM_PERIODS);
+    function dsInfo(d) {
+        const ids = (d.cfg && d.cfg.sheetIds) || [], names = ids.map(i => (forms.find(f => f.id === i) || {}).name).filter(Boolean);
+        const lay = (d.cfg && d.cfg.pivot && d.cfg.pivot.layout) || 'standard';
+        return { sheets: names.length ? names.join(', ') : 'All permitted sheets', layout: titleCase((d.cfg && d.cfg.doc && d.cfg.doc.title) || 'Statement of Account') + ' · ' + (lay === 'pivot' ? 'Pivot table' : lay === 'both' ? 'Pivot + transactions' : 'Transaction list') };
+    }
+    function mountDesigns() {
+        if (mq('stmt-designs-card')) return;
+        const em = mq('stmt-email-panel'); if (!em) return;
+        const d = document.createElement('div'); d.id = 'stmt-designs-card'; d.className = 'bg-slate-900 border border-fuchsia-700/40 rounded-2xl overflow-hidden';
+        const inp = 'bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2';
+        d.innerHTML = `<div class="p-4 border-b border-slate-800"><h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2"><i class="fa-solid fa-layer-group text-fuchsia-400"></i> Statement Designs &amp; Sets — several predesigned statements, sent together</h4>
+<p class="text-[11px] text-slate-400 mt-1 leading-relaxed">Set up the dashboard the way you want (sheets, fields, pivot, units, targets), then <b>save it as a design</b>. Make as many designs as you need. Tick the ones to use and press <b>Print</b>, <b>Email</b> or <b>Messenger</b> — each design becomes its own statement (PDF / picture) and they go out together. Every statement is filed in the Statement Ledger.</p></div>
+<div class="p-4 border-b border-slate-800 flex flex-wrap items-end gap-2"><div><div class="text-[10px] font-bold text-slate-400 uppercase mb-1">Save the current dashboard as a design</div><input id="ds-name" type="text" placeholder="Design name e.g. Daily Hauling Summary" class="${inp} w-64"></div>
+<div><div class="text-[10px] font-bold text-slate-400 uppercase mb-1">Period</div><select id="ds-period" class="${inp}">${Object.entries(DS_PERIODS).map(([k, v]) => `<option value="${k}">${escH(v)}</option>`).join('')}</select></div>
+<label class="flex items-center gap-1.5 text-[11px] text-slate-300 pb-2"><input id="ds-units" type="checkbox" class="accent-fuchsia-500">Keep the units I selected</label>
+<button type="button" onclick="dsSaveNew()" class="bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl"><i class="fa-solid fa-floppy-disk mr-1.5"></i>Save as design</button></div>
+<div class="overflow-x-auto"><table class="w-full text-left text-xs text-slate-300"><thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider font-semibold"><tr><th class="p-3 w-8"><input type="checkbox" class="accent-fuchsia-500" onchange="dsSelAll(this.checked)" title="Select all"></th><th class="p-3">Design</th><th class="p-3">Sheets · layout</th><th class="p-3">Period</th><th class="p-3 text-center">Goes to</th><th class="p-3 text-right">Actions</th></tr></thead><tbody id="ds-body" class="divide-y divide-slate-800/60"></tbody></table></div>
+<div class="p-4 border-t border-slate-800 space-y-3"><div class="flex flex-wrap items-center gap-2"><span class="text-[10px] font-bold text-slate-400 uppercase">Sets</span><input id="ds-setname" type="text" placeholder="Name this selection e.g. Morning pack" class="${inp} w-56"><button type="button" onclick="dsSaveSet()" class="${BTN}">Save selection as set</button><span id="ds-setpick-wrap"></span></div>
+<div class="flex flex-wrap gap-2"><button type="button" onclick="dsPrintSel()" class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl"><i class="fa-solid fa-print mr-1.5"></i>Print selected</button><button type="button" onclick="dsEmailSel()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl"><i class="fa-solid fa-envelope mr-1.5"></i>Email selected</button><button type="button" onclick="dsMsgrSel()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl"><i class="fa-brands fa-facebook-messenger mr-1.5"></i>Messenger selected</button><button type="button" onclick="dsAllSel()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl"><i class="fa-solid fa-bolt mr-1.5"></i>Send everything switched on</button></div>
+<div id="ds-status" class="hidden text-[11px] leading-relaxed rounded-lg border p-3"></div>
+<p class="text-[10px] text-slate-500 leading-relaxed">Email: recipients come from each design’s own setting, otherwise from “Send to” in the Email panel; designs with the same recipients arrive in <b>one email with several PDF attachments</b>. Messenger: uses the people in the personal Messenger card (or the ones chosen for that design). For <b>daily auto-send</b>, pick “the designs ticked above” (or a saved set) in the Email and Messenger cards.</p></div>`;
+        em.insertAdjacentElement('beforebegin', d); dsRender();
+    }
+    function dsStatus(h, kind) { const el = mq('ds-status'); if (!el) return; el.className = 'text-[11px] leading-relaxed rounded-lg border p-3 ' + (kind === 'ok' ? 'border-emerald-700 bg-emerald-950/40 text-emerald-200' : kind === 'err' ? 'border-rose-700 bg-rose-950/40 text-rose-200' : 'border-slate-700 bg-slate-950 text-slate-200'); el.innerHTML = h; }
+    function dsRender() {
+        const body = mq('ds-body'); if (!body) return;
+        const list = dsMine(), inp = 'w-full bg-slate-900 border border-slate-700 text-white text-[11px] rounded-lg px-2 py-1.5', lab = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
+        const chk = (d, k, t) => `<label class="inline-flex items-center gap-1 text-[10px] mr-2 cursor-pointer"><input type="checkbox" class="accent-fuchsia-500" ${d.ch[k] ? 'checked' : ''} onchange="dsCh('${d.id}','${k}',this.checked)">${t}</label>`;
+        body.innerHTML = list.length ? list.map(d => {
+            const i = dsInfo(d);
+            return `<tr class="hover:bg-slate-800/40 align-top"><td class="p-3"><input type="checkbox" class="accent-fuchsia-500" ${dsSel.has(d.id) ? 'checked' : ''} onchange="dsToggleSel('${d.id}',this.checked)"></td>
+<td class="p-3 font-semibold text-white">${escH(d.name)}<div class="text-[10px] text-slate-500 font-normal">@${escH(d.owner)}</div></td><td class="p-3 max-w-[260px]"><div class="truncate" title="${escH(i.sheets)}">${escH(i.sheets)}</div><div class="text-[10px] text-fuchsia-300">${escH(i.layout)}${d.units && d.units.length ? ' · ' + d.units.length + ' unit(s)' : ''}</div></td>
+<td class="p-3 whitespace-nowrap">${escH(d.period === 'custom' ? (d.from || 'start') + ' → ' + (d.to || 'latest') : DS_PERIODS[d.period] || d.period)}</td><td class="p-3 text-center whitespace-nowrap">${chk(d, 'print', 'Print')}${chk(d, 'email', 'Email')}${chk(d, 'msgr', 'Messenger')}</td>
+<td class="p-3 text-right whitespace-nowrap"><button class="${BTN}" onclick="dsLoad('${d.id}')" title="Put this design on the dashboard">Open</button> <button class="${BTN}" onclick="dsUpdate('${d.id}')" title="Overwrite with what is on the dashboard now">Update</button> <button class="${BTN}" onclick="dsToggleOpen('${d.id}')">${dsOpen[d.id] ? 'Hide' : 'Settings'}</button> <button class="${BTN} text-rose-300" onclick="dsDelete('${d.id}')">Delete</button></td></tr>
+${dsOpen[d.id] ? `<tr class="bg-slate-950/50"><td></td><td colspan="5" class="p-3"><div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><label class="${lab}">Design name</label><input class="${inp}" value="${escH(d.name)}" onchange="dsField('${d.id}','name',this.value)"></div>
+<div><label class="${lab}">Period</label><select class="${inp}" onchange="dsField('${d.id}','period',this.value)">${Object.entries(DS_PERIODS).map(([k, v]) => `<option value="${k}" ${k === d.period ? 'selected' : ''}>${escH(v)}</option>`).join('')}</select></div>
+<div><label class="${lab}">Email to (this design only — blank = use the Email panel)</label><input class="${inp}" value="${escH(d.emailTo || '')}" placeholder="name@company.com, other@company.com" onchange="dsField('${d.id}','emailTo',this.value)"></div>
+<div><label class="${lab}">Email subject (blank = automatic)</label><input class="${inp}" value="${escH(d.subject || '')}" placeholder="{sheets} {from} {to} {date} are filled in" onchange="dsField('${d.id}','subject',this.value)"></div>
+<div class="md:col-span-2"><label class="${lab}">Note shown above this statement in the email / Messenger</label><input class="${inp}" value="${escH(d.message || '')}" onchange="dsField('${d.id}','message',this.value)"></div>
+<div class="md:col-span-2"><label class="${lab}">Messenger — send this design to (none ticked = everyone in the personal Messenger card)</label>${pf.contacts.length ? pf.contacts.map(c => `<label class="inline-flex items-center gap-1 text-[11px] mr-3"><input type="checkbox" class="accent-fuchsia-500" ${(d.msgrIds || []).includes(c.id) ? 'checked' : ''} onchange="dsMsgrToggle('${d.id}','${escH(c.id)}',this.checked)">${escH(c.name || c.id)}</label>`).join('') : '<span class="text-[11px] text-slate-500">Add people in the personal Messenger card first.</span>'}</div></div></td></tr>` : ''}`;
+        }).join('') : '<tr><td colspan="6" class="p-6 text-center text-slate-500">No designs yet. Arrange the dashboard (sheets, fields, pivot…), type a name above and press “Save as design”.</td></tr>';
+        const sets = dsSets.filter(s => activeUserRole === 'Administrator' || s.owner === activeUser), w = mq('ds-setpick-wrap');
+        if (w) w.innerHTML = sets.length ? `<select id="ds-setpick" class="bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2">${sets.map(s => `<option value="${s.id}">${escH(s.name)} (${s.ids.length})</option>`).join('')}</select> <button type="button" class="${BTN}" onclick="dsLoadSet()">Select its designs</button> <button type="button" class="${BTN} text-rose-300" onclick="dsDelSet()">Delete set</button>` : '';
+        dsRefreshPickers();
+    }
+    function dsRefreshPickers() {
+        const sets = dsSets.filter(s => activeUserRole === 'Administrator' || s.owner === activeUser);
+        const opts = '<option value="">Current dashboard setup (as before)</option>' + `<option value="sel">The designs ticked in “Statement Designs” (${dsSel.size})</option>` + sets.map(s => `<option value="set:${s.id}">Set: ${escH(s.name)} (${s.ids.length})</option>`).join('');
+        [['em-pkg', 'em-late'], ['pm-pkg', 'pm-notify']].forEach(([id, before]) => {
+            let el = mq(id);
+            if (!el) { const anchor = mq(before); if (!anchor) return; const wrap = document.createElement('div'); wrap.className = 'md:col-span-2'; wrap.innerHTML = `<label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">What to send automatically — statement design(s)</label><select id="${id}" class="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2"></select>`; const host = anchor.closest('label') || anchor; host.parentNode.insertBefore(wrap, host); el = mq(id); }
+            const cur = el.value; el.innerHTML = opts; el.value = [...el.options].some(o => o.value === cur) ? cur : '';
+        });
+    }
+    const dsIdsFor = v => v === 'sel' ? [...dsSel] : String(v).startsWith('set:') ? ((dsSets.find(s => s.id === v.slice(4)) || {}).ids || []) : null;
+
+    Object.assign(window, {
+        dsSaveNew() {
+            const name = (mq('ds-name').value || '').trim(); if (!name) { showToast('Give the design a name.', 'error'); return; }
+            if (!stmtCfg) loadStmtCfg(); try { saveStmtCfg(); } catch (e) {}
+            const per = mq('ds-period').value, d = { id: 'DS-' + Date.now().toString(36), name, owner: activeUser, cfg: JSON.parse(JSON.stringify(stmtCfg)), period: per, from: mq('stmt-from').value, to: mq('stmt-to').value, units: mq('ds-units').checked ? getSelUnits('stmt').slice() : [], ch: { print: true, email: true, msgr: true }, emailTo: '', subject: '', message: '', msgrIds: [] };
+            dsList.push(d); dsSel.add(d.id); dsPersist(); mq('ds-name').value = ''; dsRender();
+            try { logAccess('Statement design saved', name); } catch (e) {} showToast('Design “' + name + '” saved and ticked.', 'success');
+        },
+        dsLoad(id) {
+            const d = dsById(id); if (!d) return;
+            try {
+                localStorage.setItem(STMT_KEY, JSON.stringify(d.cfg)); loadStmtCfg(); unitSel.stmt = (d.units || []).slice();
+                const r = d.period === 'custom' ? { from: d.from, to: d.to } : (d.period === 'screen' ? { from: mq('stmt-from').value, to: mq('stmt-to').value } : emPeriodRange(d.period));
+                mq('stmt-from').value = r.from || ''; mq('stmt-to').value = r.to || '';
+                initStatementTab(); renderStatement(); saveStmtCfg(); showToast('Design “' + d.name + '” is now on the dashboard.', 'success'); window.scrollTo(0, 0);
+            } catch (e) { showToast('Could not open that design.', 'error'); }
+        },
+        dsUpdate(id) { const d = dsById(id); if (!d) return; if (!confirm('Overwrite “' + d.name + '” with the dashboard as it is now?')) return; try { saveStmtCfg(); } catch (e) {} d.cfg = JSON.parse(JSON.stringify(stmtCfg)); if (d.period === 'custom') { d.from = mq('stmt-from').value; d.to = mq('stmt-to').value; } if ((d.units || []).length) d.units = getSelUnits('stmt').slice(); dsPersist(); dsRender(); showToast('Design updated.', 'success'); },
+        dsDelete(id) { const d = dsById(id); if (!d || !confirm('Delete design “' + d.name + '”?')) return; dsList = dsList.filter(x => x.id !== id); dsSel.delete(id); dsSets.forEach(s => s.ids = s.ids.filter(x => x !== id)); dsPersist(); dsRender(); },
+        dsToggleSel(id, on) { on ? dsSel.add(id) : dsSel.delete(id); dsPersist(); dsRefreshPickers(); },
+        dsSelAll(on) { dsMine().forEach(d => on ? dsSel.add(d.id) : dsSel.delete(d.id)); dsPersist(); dsRender(); },
+        dsCh(id, k, on) { const d = dsById(id); if (d) { d.ch[k] = !!on; dsPersist(); } },
+        dsField(id, k, v) { const d = dsById(id); if (d) { d[k] = v; dsPersist(); dsRender(); } },
+        dsMsgrToggle(id, cid, on) { const d = dsById(id); if (!d) return; const s = new Set(d.msgrIds || []); on ? s.add(cid) : s.delete(cid); d.msgrIds = [...s]; dsPersist(); },
+        dsToggleOpen(id) { dsOpen[id] = !dsOpen[id]; dsRender(); },
+        dsSaveSet() { const n = (mq('ds-setname').value || '').trim(); if (!n) { showToast('Name the set first.', 'error'); return; } if (!dsSel.size) { showToast('Tick at least one design.', 'error'); return; } dsSets.push({ id: 'SET-' + Date.now().toString(36), name: n, owner: activeUser, ids: [...dsSel] }); mq('ds-setname').value = ''; dsPersist(); dsRender(); showToast('Set “' + n + '” saved.', 'success'); },
+        dsLoadSet() { const s = dsSets.find(x => x.id === (mq('ds-setpick') || {}).value); if (!s) return; dsSel = new Set(s.ids.filter(i => dsById(i))); dsPersist(); dsRender(); },
+        dsDelSet() { const id = (mq('ds-setpick') || {}).value; if (id && confirm('Delete this set? (the designs stay)')) { dsSets = dsSets.filter(x => x.id !== id); dsPersist(); dsRender(); } }
+    });
+
+    // ---- build one design into a ready statement (as the owner, with that design's own setup and period)
+    function dsBuild(d, owner, o) {
+        o = o || {}; const el = id => document.getElementById(id), scr = { from: el('stmt-from').value, to: el('stmt-to').value };
+        const s = { owner: owner || activeUser, cfg: d.cfg, period: d.period === 'screen' ? (o.scheduled ? 'today' : 'custom') : d.period };
+        let out = null;
+        withSchedCtx(s, () => {
+            if (d.period === 'custom') { el('stmt-from').value = d.from || ''; el('stmt-to').value = d.to || ''; }
+            else if (d.period === 'screen' && !o.scheduled) { el('stmt-from').value = scr.from; el('stmt-to').value = scr.to; }
+            unitSel.stmt = (d.units && d.units.length) ? d.units.slice() : [];
+            const S = computeStatement();
+            const P = buildEmailPayload(S, { to: o.to || [], subject: d.subject || (d.name + ' – Statement of Account – {sheets} – {from} to {to}'), message: o.message != null ? o.message : (d.message || '') });
+            out = { d, S, P, printPage: buildPrintPage(S, P.meta.ref) };
+        });
+        return out;
+    }
+    const picked = (ids, ch) => ids.map(dsById).filter(d => d && d.ch[ch]);
+    const safeName = n => String(n).replace(/[^A-Za-z0-9 _\-]+/g, '').trim().replace(/\s+/g, '_') || 'Statement';
+
+    // ---- PRINT: all designs in one print job
+    async function dsPrint(ids, opt) {
+        const ds = picked(ids, 'print'); if (!ds.length) return { ok: false, msg: 'None of the selected designs is switched on for Print.' };
+        const built = ds.map(d => dsBuild(d, opt && opt.owner));
+        const bodies = built.map(b => { const m = b.printPage.match(/<body>([\s\S]*)<\/body>/); return `<div style="page:${/size:A4 landscape/.test(b.printPage) ? 'wide' : 'tall'};page-break-after:always">${m ? m[1] : ''}</div>`; }).join('');
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Statements – ${built.length} design(s)</title><style>@page tall{size:A4;margin:10mm}@page wide{size:A4 landscape;margin:10mm}body{margin:0;background:#fff}${STMT_CSS}.soa{padding:0}</style></head><body>${bodies}</body></html>`;
+        for (const b of built) { b.P.to = ''; await saveFromEmail(Object.assign({}, b.P, { pdfHtml: b.printPage, id: '' }), { ok: true }, { action: 'Printed (set)', status: 'Printed' }); }
+        openPrint(pageWith(html, '', true));
+        try { logAccess('Printed statement set', built.map(b => b.d.name).join(', ')); } catch (e) {}
+        return { ok: true, msg: built.length + ' statement(s) sent to the printer', count: built.length };
+    }
+    // ---- EMAIL: designs with the same recipients -> one email, several PDF attachments
+    let dsVer = { t: 0, v: 0 };
+    async function dsScriptVersion() {
+        if (Date.now() - dsVer.t < 60000) return dsVer.v;
+        let v = 0; try { const s = emSettings(); const j = await (await fetch(emUrl(s.webappId, 'action=ping'), { cache: 'no-store' })).json(); v = +j.version || 0; } catch (e) {}
+        dsVer = { t: Date.now(), v }; return v;
+    }
+    const SUMSPLIT = '<hr style="margin:18px 0;border:0;border-top:1px solid #d6dbe3">';
+    async function dsEmail(ids, opt) {
+        opt = opt || {}; const ds = picked(ids, 'email'); if (!ds.length) return { ok: false, msg: 'None of the selected designs is switched on for Email.' };
+        const defTo = opt.to || emParse(emVal('em-to')), groups = new Map();
+        for (const d of ds) {
+            const to = d.emailTo && d.emailTo.trim() ? emParse(d.emailTo) : defTo;
+            if (!to.length || to.some(a => !emValid(a))) return { ok: false, msg: 'Design “' + d.name + '” has no valid email recipient. Fill “Send to” in the Email panel or in the design’s Settings.' };
+            const k = to.join(','); if (!groups.has(k)) groups.set(k, { to, items: [] }); groups.get(k).items.push(d);
+        }
+        const msg = opt.message != null ? opt.message : emVal('em-msg'), ver = await dsScriptVersion(); let gi = 0, ok = true; const notes = [];
+        for (const [, g] of groups) {
+            gi++; const built = g.items.map(d => dsBuild(d, opt.owner, { to: g.to, message: d.message || msg, scheduled: opt.scheduled })); built.forEach(b => { b.P.to = g.to.join(','); });
+            const gid = opt.id ? opt.id + '-g' + gi : '';
+            if (built.length > 1 && ver >= 7) {
+                const files = built.map((b, i) => ({ name: safeName(b.d.name) + '_' + isoDate(new Date()) + '.pdf', html: b.P.pdfHtml }));
+                const body = `<div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a">${msg ? `<p style="font-size:13px;white-space:pre-wrap">${escH(msg)}</p>` : ''}<p style="font-size:13px"><b>${built.length} statements attached as PDF:</b> ${built.map(b => escH(b.d.name)).join(' · ')}</p></div>` + built.map(b => `<h3 style="font-family:Arial;margin:18px 0 4px;color:#0f2a4a">${escH(b.d.name)}</h3>` + b.P.html).join('<hr style="margin:14px 0;border:0;border-top:1px solid #d6dbe3">');
+                const payload = { to: g.to.join(','), subject: (opt.subject || (built.length + ' Statements – ' + built.map(b => b.d.name).join(', ') + ' – ' + fmtDate(isoDate(new Date())))).slice(0, 200), html: body, pdfHtml: built[0].P.pdfHtml, fileName: files[0].name, files, text: built.map(b => b.P.text).join('\n\n'), id: gid || undefined };
+                const r = await postEmail(payload); if (!r.ok) ok = false; notes.push(r.ok ? `${built.length} statements → ${g.to.join(', ')}` : r.msg);
+                for (let i = 0; i < built.length; i++) await saveFromEmail(Object.assign({}, built[i].P, { id: gid ? gid + '#' + i : '' }), r, { action: opt.scheduled ? 'Scheduled email (set)' : 'Emailed (set)' });
+            } else {
+                for (let i = 0; i < built.length; i++) { const P = built[i].P; if (gid) P.id = gid + '#' + i; const r = await postEmail(P); if (!r.ok) ok = false; notes.push(r.ok ? `${built[i].d.name} → ${g.to.join(', ')}` : `${built[i].d.name}: ${r.msg}`); }
+                if (built.length > 1 && ver < 7) notes.push('(your Google script is older than v7, so each statement went in its own email — copy the new script from the Connection tab for one combined email)');
+            }
+        }
+        return { ok, msg: notes.join(' · '), count: ds.length };
+    }
+    // ---- MESSENGER (personal): one waiting card per design, each with its own picture(s)
+    async function dsMessenger(ids, opt) {
+        opt = opt || {}; const ds = picked(ids, 'msgr'); if (!ds.length) return { ok: false, msg: 'None of the selected designs is switched on for Messenger.' };
+        const base = opt.contacts || pf.contacts; if (!base.length && ds.every(d => !(d.msgrIds || []).length)) return { ok: false, msg: 'Add at least one person in the personal Messenger card.' };
+        let n = 0;
+        for (const d of ds) {
+            const contacts = (d.msgrIds || []).length ? pf.contacts.filter(c => d.msgrIds.includes(c.id)) : base; if (!contacts.length) continue;
+            const b = dsBuild(d, opt.owner, { to: [], message: '', scheduled: opt.scheduled }); b.P.to = contacts.map(c => c.name || c.id).join(', ');
+            await saveFromEmail(Object.assign({}, b.P, { id: '' }), { ok: true }, { action: 'Messenger (personal)', status: 'Prepared' });
+            pPending.push({ ref: b.P.meta.ref, contacts: JSON.parse(JSON.stringify(contacts)), text: msgrText(b.P, d.message || opt.message || ''), title: d.name + ' — ' + b.P.subject, when: getLocalTimestamp(), done: [], by: b.P.meta.by }); n++;
+        }
+        if (!n) return { ok: false, msg: 'No Messenger recipients for the selected designs.' };
+        ppSave(); pmPendingBtn(); if (opt.notify) pmNotify('Statements ready to send on Messenger', n + ' statement(s)'); pmShow();
+        return { ok: true, msg: n + ' statement(s) prepared — send them from the pop-up', count: n };
+    }
+    const dsRun = async (label, fn) => {
+        const ids = [...dsSel].filter(i => dsById(i)); if (!ids.length) { showToast('Tick at least one design first.', 'error'); return; }
+        dsStatus('<i class="fa-solid fa-spinner fa-spin"></i> ' + label + '…'); let r;
+        try { r = await fn(ids); } catch (e) { r = { ok: false, msg: (e && e.message) || String(e) }; }
+        dsStatus((r.ok ? '<b>✓</b> ' : '<b>✗</b> ') + escH(r.msg), r.ok ? 'ok' : 'err'); return r;
+    };
+    Object.assign(window, {
+        dsPrintSel() { dsRun('Preparing statements for print', ids => dsPrint(ids)); },
+        dsEmailSel() { dsRun('Emailing statements (waiting for Google to confirm)', ids => dsEmail(ids)); },
+        dsMsgrSel() { dsRun('Preparing Messenger statements', ids => dsMessenger(ids, { message: pf.msg })); },
+        async dsAllSel() { const ids = [...dsSel].filter(i => dsById(i)); if (!ids.length) { showToast('Tick at least one design first.', 'error'); return; } const out = []; for (const [k, f, lbl] of [['print', ids => dsPrint(ids), 'Print'], ['email', ids => dsEmail(ids), 'Email'], ['msgr', ids => dsMessenger(ids, { message: pf.msg }), 'Messenger']]) { if (!picked(ids, k).length) continue; dsStatus('<i class="fa-solid fa-spinner fa-spin"></i> ' + lbl + '…'); let r; try { r = await f(ids); } catch (e) { r = { ok: false, msg: e.message }; } out.push((r.ok ? '✓ ' : '✗ ') + lbl + ': ' + r.msg); } dsStatus(out.map(escH).join('<br>'), out.every(x => x[0] === '✓') ? 'ok' : 'err'); }
+    });
+
+    // ---- daily auto-send of a design set (Email + personal Messenger schedules)
+    const _ses = saveEmailSchedule;
+    saveEmailSchedule = function () {
+        const n = emailScheds.length, v = (mq('em-pkg') || {}).value || ''; _ses.apply(this, arguments);
+        if (emailScheds.length > n && v) { const ids = dsIdsFor(v) || []; const s = emailScheds[emailScheds.length - 1]; if (!ids.filter(i => dsById(i) && dsById(i).ch.email).length) { showToast('The chosen designs are not switched on for Email — saved as a normal schedule.', 'error'); return; } s.pkg = { ids }; s.sheetNames = 'Designs: ' + ids.map(i => (dsById(i) || {}).name).filter(Boolean).join(', '); saveEmailScheds(); renderEmailScheds(); }
+    };
+    const _res = runEmailSchedule;
+    runEmailSchedule = async function (s, manual) {
+        if (!s.pkg) return _res.apply(this, arguments);
+        const today = isoDate(new Date());
+        if (!manual) { try { const fresh = (JSON.parse(localStorage.getItem(EMAIL_SCHED_KEY)) || []).find(x => x.id === s.id); if (fresh && fresh.lastDate === today) { s.lastDate = today; return; } } catch (e) {} s.lastDate = today; saveEmailScheds(); }
+        let r; try { r = await dsEmail(s.pkg.ids, { owner: s.owner, to: s.to, message: s.message, scheduled: true, id: manual ? undefined : 'EM-' + s.id + '-' + today, subject: s.subject }); } catch (e) { r = { ok: false, msg: e.message || String(e) }; }
+        const stamp = getLocalTimestamp();
+        if (r.ok) { s.lastStatus = 'Sent (' + (r.count || 0) + ' statements)'; s.lastSent = stamp; s.nextTry = 0; } else { s.lastStatus = 'Failed: ' + r.msg; s.lastSent = stamp; if (!manual) { s.lastDate = ''; s.nextTry = Date.now() + 10 * 60000; } }
+        saveEmailScheds(); renderEmailScheds();
+        try { logAccess(r.ok ? 'Scheduled statement set emailed' : 'Scheduled statement set email FAILED', `${s.to.join(', ')}${r.ok ? '' : ' · ' + r.msg}`); } catch (e) {}
+        showToast(r.ok ? 'Statement set emailed' : 'Scheduled set email failed: ' + r.msg, r.ok ? 'success' : 'error');
+    };
+    const _pss = window.pmSaveSchedule;
+    window.pmSaveSchedule = function () {
+        const n = pScheds.length, v = (mq('pm-pkg') || {}).value || ''; _pss.apply(this, arguments);
+        if (pScheds.length > n && v) { const ids = dsIdsFor(v) || [], s = pScheds[pScheds.length - 1]; s.pkg = { ids }; s.sheetNames = 'Designs: ' + ids.map(i => (dsById(i) || {}).name).filter(Boolean).join(', '); psSave(); pmRenderScheds(); }
+    };
+    const _rps = runPmSchedule;
+    runPmSchedule = async function (s, manual) {
+        if (!s.pkg) return _rps.apply(this, arguments);
+        const today = isoDate(new Date());
+        if (!manual) { try { const fresh = (JSON.parse(localStorage.getItem(PS_KEY)) || []).find(x => x.id === s.id); if (fresh && fresh.lastDate === today) { s.lastDate = today; return; } } catch (e) {} s.lastDate = today; psSave(); }
+        let r; try { r = await dsMessenger(s.pkg.ids, { owner: s.owner, contacts: s.contacts, message: s.message, notify: s.notify, scheduled: true }); } catch (e) { r = { ok: false, msg: e.message || String(e) }; }
+        s.lastStatus = r.ok ? 'Prepared ' + r.count + ' — waiting for you to send' : 'Failed: ' + r.msg; s.lastSent = getLocalTimestamp(); psSave(); pmRenderScheds();
+    };
+    // send-everything-at-once on phones
+    Object.assign(window, {
+        async pmShareAll() {
+            const files = []; for (const it of pPending) { const im = await pmMakeImage(it.ref); if (im) im.parts.forEach((pt, n) => files.push(new File([pt.blob], it.ref + (im.parts.length > 1 ? '-part' + (n + 1) : '') + '.png', { type: 'image/png' }))); }
+            try { if (files.length && navigator.canShare && navigator.canShare({ files })) { await navigator.share({ title: 'Statements', text: pPending.map(i => i.text).join('\n\n').slice(0, 3000), files }); } else showToast('This browser cannot share several pictures at once — use each statement’s own button.', 'error'); } catch (e) {}
+        }
+    });
+    const _swD = switchTab; switchTab = function (t) { const r = _swD.apply(this, arguments); if (t === 'statement') { mountDesigns(); dsRender(); } return r; };
+
+    // =================================================================== DOCUMENT STYLE: Statement of Account / Report + letterhead
+    const DC_DEF = { type: 'soa', title: 'STATEMENT OF ACCOUNT', prefix: 'SOA', subtitle: '', summaryTitle: 'Account Summary', detailTitle: 'Transaction Details', billedLabel: 'Billed To', dateLabel: 'Date Issued', sig: ['Reviewed by', 'Approved by', 'Verified by'], company: 'ULLSWATER CORPORATION', tagline: 'Fleet Operations & Hauling', address: '', contact: '', logo: '', logoH: 56, header: 'split', topSpace: 30, accent: '#0f2a4a', font: 'arial', orientation: 'portrait', footer: '', sections: { meta: true, summary: true, details: true, receipt: true, remarks: true, signatures: true, notes: true } };
+    const DC_TYPES = {
+        soa: { type: 'soa', title: 'STATEMENT OF ACCOUNT', prefix: 'SOA', summaryTitle: 'Account Summary', detailTitle: 'Transaction Details', billedLabel: 'Billed To', dateLabel: 'Date Issued', sig: ['Reviewed by', 'Approved by', 'Verified by'], sections: { receipt: true, signatures: true, notes: true } },
+        report: { type: 'report', title: 'ACTIVITY REPORT', prefix: 'RPT', summaryTitle: 'Summary', detailTitle: 'Detailed Listing', billedLabel: 'Prepared For', dateLabel: 'Date Generated', sig: ['Prepared by', 'Checked by', 'Noted by'], sections: { receipt: false, signatures: true, notes: false } }
+    };
+    const DC_FONTS = { arial: 'Arial,Helvetica,sans-serif', georgia: 'Georgia,"Times New Roman",serif', times: '"Times New Roman",Times,serif', segoe: '"Segoe UI",Tahoma,Geneva,sans-serif' };
+    function dcCfg() {
+        const c = stmtCfg || (stmtCfg = {}), cur = c.doc || {}, d = Object.assign(JSON.parse(JSON.stringify(DC_DEF)), cur);
+        d.sections = Object.assign({}, DC_DEF.sections, cur.sections || {}); if (!Array.isArray(d.sig) || d.sig.length < 3) d.sig = DC_DEF.sig.slice(); c.doc = d; return d;
+    }
+    const titleCase = t => String(t || '').toLowerCase().replace(/\b\w/g, m => m.toUpperCase());
+    function dcHeader(docNo, D) {
+        const AC = D.accent || '#0f2a4a', lines = String(D.address || '').split(/\n/).map(x => x.trim()).filter(Boolean);
+        const logo = D.logo ? `<img src="${D.logo}" alt="" style="max-height:${+D.logoH || 56}px;max-width:220px;object-fit:contain;display:block">` : '';
+        const co = `${D.company ? `<div class="co">${escH(D.company)}</div>` : ''}${D.tagline ? `<div class="cosub">${escH(D.tagline)}</div>` : ''}${lines.map(l => `<div class="cosub">${escH(l)}</div>`).join('')}${D.contact ? `<div class="cosub">${escH(D.contact)}</div>` : ''}`;
+        const ttl = `<div class="t1">${escH(D.title)}</div><div class="t2">${escH(docNo)}</div>${D.subtitle ? `<div class="t2" style="font-family:Arial,sans-serif;font-size:10.5px">${escH(D.subtitle)}</div>` : ''}`;
+        if (D.header === 'center') return `<div class="hd" style="display:block;text-align:center">${logo ? `<div style="display:flex;justify-content:center;margin-bottom:4px">${logo}</div>` : ''}${co}<div class="ttl" style="text-align:center;margin-top:8px">${ttl}</div></div>`;
+        if (D.header === 'banner') return `<div class="hd" style="border-bottom:0;padding-bottom:4px;align-items:center"><div>${logo}</div><div style="text-align:right">${co}</div></div><div style="background:${AC};color:#fff;text-align:center;padding:7px;font-weight:800;letter-spacing:2px;font-size:14px;margin-bottom:12px;-webkit-print-color-adjust:exact;print-color-adjust:exact">${escH(D.title)} <span style="font-weight:400;font-size:10px;font-family:monospace;margin-left:10px">${escH(docNo)}</span></div>${D.subtitle ? `<div style="text-align:center;font-size:10.5px;color:#444;margin:-6px 0 10px">${escH(D.subtitle)}</div>` : ''}`;
+        if (D.header === 'none') return `<div style="height:${+D.topSpace || 0}mm"></div><div class="hd" style="display:block;text-align:center"><div class="ttl" style="text-align:center">${ttl}</div></div>`;
+        return `<div class="hd"><div style="display:flex;gap:12px;align-items:center">${logo}<div>${co}</div></div><div class="ttl">${ttl}</div></div>`;
+    }
+    function dcApply(h) {
+        const D = dcCfg(), S = D.sections, esc = escH;
+        h = h.replace(/<div class="hd">[\s\S]*?<div class="t2">([^<]*)<\/div><\/div><\/div>/, (m, no) => dcHeader(D.prefix && D.prefix !== 'SOA' ? no.replace(/^SOA-/, D.prefix + '-') : no, D));
+        const cut = n => { h = h.replace(new RegExp('<!--' + n + '-->[\\s\\S]*?<!--/' + n + '-->'), ''); };
+        if (!S.meta) cut('META'); if (!S.summary) cut('SUM'); if (!S.receipt) cut('RCPT'); if (!S.remarks) cut('REM'); if (!S.signatures) cut('SIG');
+        if (!S.details) h = h.replace(/<!--TXD-->[\s\S]*?<!--\/TXD-->/, '');
+        if (!S.notes) h = h.replace(/<div class="note"[^>]*>[\s\S]*?<\/div>/g, '');
+        h = h.replace('<b>Billed To</b>', () => '<b>' + esc(D.billedLabel) + '</b>').replace('<b>Date Issued</b>', () => '<b>' + esc(D.dateLabel) + '</b>')
+            .replace('<div class="sec">Account Summary</div>', () => '<div class="sec">' + esc(D.summaryTitle) + '</div>').replace(/Transaction Details/g, () => esc(D.detailTitle));
+        ['Reviewed by', 'Approved by', 'Verified by'].forEach((t, i) => { h = h.replace('<div class="signame">' + t + '</div>', () => '<div class="signame">' + esc(D.sig[i]) + '</div>'); });
+        if (D.footer) h = h.replace(/<div class="foot">[\s\S]*?<\/div>/, () => '<div class="foot">' + esc(D.footer) + ' · ' + getLocalTimestamp() + '</div>');
+        const AC = D.accent || '#0f2a4a', FONT = DC_FONTS[D.font] || DC_FONTS.arial; let hs = 0; const key = AC + D.font; for (let i = 0; i < key.length; i++) hs = (hs * 31 + key.charCodeAt(i)) >>> 0;
+        const cls = 'dc' + hs.toString(36), P = '.soa.' + cls;
+        const css = `${P} .co,${P} .t1,${P} .sec,${P} .strong,${P} .grp td,${P} .rcpt .r-gross td,${P} .pv td.pvl{color:${AC}}${P} .hd{border-bottom-color:${AC}}${P} .sec{border-left-color:${AC}}${P} .grid,${P} .rcpt{border-color:${AC}}${P} .grid th,${P} tfoot td,${P} .rcpt .r-final td,${P} .pv tr.pvtot td{background:${AC}!important;color:#fff!important}${P}{font-family:${FONT}}`;
+        return h.replace('<div class="soa">', () => `<style>${css}</style><div class="soa ${cls}">`);
+    }
+    const _bsd3 = buildStatementDocHtml;
+    buildStatementDocHtml = function (S, forPrint) { const h = _bsd3.call(this, S, forPrint); try { return dcApply(h); } catch (e) { console.error('Document style', e); return h; } };
+
+    function mountDocStyle() {
+        if (mq('stmt-doc-card')) return;
+        const anchor = mq('stmt-designs-card') || mq('stmt-email-panel'); if (!anchor) return;
+        const d = document.createElement('div'); d.id = 'stmt-doc-card'; d.className = 'bg-slate-900 border border-amber-600/40 rounded-2xl overflow-hidden';
+        anchor.insertAdjacentElement('beforebegin', d); dcRender();
+    }
+    function dcRender() {
+        const el = mq('stmt-doc-card'); if (!el || !stmtCfg) return; const D = dcCfg();
+        const inp = 'w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-lg px-2.5 py-2', lab = 'block text-[10px] font-bold text-slate-400 uppercase mb-1';
+        const tb = (t, label, ic) => `<button type="button" onclick="dcType('${t}')" class="flex-1 min-w-[150px] text-left px-3 py-2.5 rounded-xl border ${D.type === t ? 'bg-amber-600/20 border-amber-500 text-white' : 'bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-800'}"><i class="fa-solid ${ic} mr-2 text-amber-400"></i><b class="text-xs">${label}</b></button>`;
+        const sec = (k, t) => `<label class="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer"><input type="checkbox" class="accent-amber-500" ${D.sections[k] ? 'checked' : ''} onchange="dcSection('${k}',this.checked)">${t}</label>`;
+        const tx = (k, label, ph, span) => `<div class="${span || ''}"><label class="${lab}">${label}</label><input class="${inp}" value="${escH(D[k] || '')}" placeholder="${escH(ph || '')}" onchange="dcSet('${k}',this.value)"></div>`;
+        el.innerHTML = `<div class="p-4 border-b border-slate-800"><h4 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2"><i class="fa-solid fa-file-invoice text-amber-400"></i> Document Style — Statement of Account or Report, with your letterhead</h4>
+<p class="text-[11px] text-slate-400 mt-1 leading-relaxed">Choose what the printed / emailed / Messenger document is called and how it looks. These settings are saved with each <b>design</b>, so different designs can be different documents (e.g. a Statement of Account for the client and an Activity Report for management).</p></div>
+<div class="p-4 space-y-4">
+<div class="flex flex-wrap gap-2">${tb('soa', 'Statement of Account', 'fa-file-invoice-dollar')}${tb('report', 'Report', 'fa-chart-column')}${tb('custom', 'Custom (my own titles)', 'fa-pen-ruler')}</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-3">${tx('title', 'Document title', 'STATEMENT OF ACCOUNT')}${tx('prefix', 'Document no. prefix', 'SOA')}${tx('subtitle', 'Sub-title line (optional)', 'e.g. Monthly hauling activity — client copy')}${tx('summaryTitle', 'Summary section title', 'Account Summary')}${tx('detailTitle', 'Detail section title', 'Transaction Details')}${tx('billedLabel', 'Label for “Billed To”', 'Billed To')}${tx('dateLabel', 'Label for “Date Issued”', 'Date Issued')}<div class="md:col-span-2"><label class="${lab}">Signature boxes (3 titles)</label><div class="flex gap-2">${[0, 1, 2].map(i => `<input class="${inp}" value="${escH(D.sig[i])}" onchange="dcSig(${i},this.value)">`).join('')}</div></div></div>
+<div><div class="text-[10px] font-bold text-amber-300 uppercase tracking-wider mb-2">Letterhead / header</div><div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+${tx('company', 'Company name', 'ULLSWATER CORPORATION')}${tx('tagline', 'Tagline', 'Fleet Operations & Hauling')}${tx('contact', 'Contact line (phone · email · TIN)', '+63 … · accounts@… · TIN …')}
+<div class="md:col-span-2"><label class="${lab}">Address (one line per row)</label><textarea rows="2" class="${inp}" onchange="dcSet('address',this.value)">${escH(D.address)}</textarea></div>
+<div><label class="${lab}">Header layout</label><select class="${inp}" onchange="dcSet('header',this.value)">${[['split', 'Company left · title right'], ['center', 'Centered letterhead'], ['banner', 'Letterhead + colour title bar'], ['none', 'No letterhead (pre-printed paper)']].map(([k, v]) => `<option value="${k}" ${D.header === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+<div><label class="${lab}">Logo</label><div class="flex items-center gap-2">${D.logo ? `<img src="${D.logo}" class="h-9 rounded bg-white p-0.5"><button type="button" onclick="dcLogoClear()" class="text-[11px] text-rose-300 font-semibold">Remove</button>` : ''}<label class="${BTN} cursor-pointer">${D.logo ? 'Change' : 'Upload logo'}<input type="file" accept="image/*" class="hidden" onchange="dcLogo(this)"></label></div></div>
+<div><label class="${lab}">Logo height (px)</label><input type="number" min="20" max="160" class="${inp}" value="${+D.logoH || 56}" onchange="dcSet('logoH',+this.value)"></div>
+<div><label class="${lab}">Top space for pre-printed paper (mm)</label><input type="number" min="0" max="120" class="${inp}" value="${+D.topSpace || 0}" onchange="dcSet('topSpace',+this.value)"></div>
+<div><label class="${lab}">Accent colour</label><input type="color" class="w-full h-9 bg-slate-950 border border-slate-700 rounded-lg" value="${escH(D.accent || '#0f2a4a')}" onchange="dcSet('accent',this.value)"></div>
+<div><label class="${lab}">Font</label><select class="${inp}" onchange="dcSet('font',this.value)">${[['arial', 'Arial (clean)'], ['segoe', 'Segoe UI'], ['georgia', 'Georgia (serif)'], ['times', 'Times New Roman']].map(([k, v]) => `<option value="${k}" ${D.font === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+<div><label class="${lab}">Paper</label><select class="${inp}" onchange="dcSet('orientation',this.value)"><option value="portrait" ${D.orientation !== 'landscape' ? 'selected' : ''}>A4 portrait</option><option value="landscape" ${D.orientation === 'landscape' ? 'selected' : ''}>A4 landscape</option></select></div>
+${tx('footer', 'Footer text (blank = “System-generated statement · Ullswater Fleet Hub”)', '', 'md:col-span-3')}</div></div>
+<div><div class="text-[10px] font-bold text-amber-300 uppercase tracking-wider mb-2">Show on the document</div><div class="flex flex-wrap gap-x-5 gap-y-1.5">${sec('meta', 'Info table (billed to, project…)')}${sec('summary', 'Summary table')}${sec('details', 'Detail listing')}${sec('receipt', 'Net-amount computation')}${sec('remarks', 'Remarks')}${sec('signatures', 'Signature boxes')}${sec('notes', 'Explanatory notes')}</div></div>
+<div class="flex gap-2 items-center"><button type="button" onclick="dcReset()" class="${BTN}">Reset to default</button><span class="text-[10px] text-slate-500">The Statement Preview below updates as you change these. Logos show in PDFs and prints; some email apps hide pictures inside the email body.</span></div></div>`;
+    }
+    const dcSave = () => { try { saveStmtCfg(); } catch (e) {} renderStatement(); };
+    Object.assign(window, {
+        dcSet(k, v) { dcCfg()[k] = v; dcSave(); },
+        dcSig(i, v) { dcCfg().sig[i] = v; dcSave(); },
+        dcSection(k, on) { dcCfg().sections[k] = !!on; dcSave(); },
+        dcType(t) { const D = dcCfg(); if (t === 'custom') D.type = 'custom'; else { const p = DC_TYPES[t]; Object.assign(D, JSON.parse(JSON.stringify(p)), { sections: Object.assign({}, D.sections, p.sections) }); } dcSave(); dcRender(); },
+        dcReset() { if (!confirm('Reset the document style to the default Statement of Account?')) return; stmtCfg.doc = JSON.parse(JSON.stringify(DC_DEF)); dcSave(); dcRender(); },
+        dcLogoClear() { dcCfg().logo = ''; dcSave(); dcRender(); },
+        dcLogo(inp) {
+            const f = inp.files && inp.files[0]; if (!f) return; if (f.size > 4e6) { showToast('Choose a logo under 4 MB.', 'error'); return; }
+            const fr = new FileReader(); fr.onload = () => { const im = new Image(); im.onload = () => { const sc = Math.min(1, 200 / im.height, 600 / im.width), cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(im.width * sc)); cv.height = Math.max(1, Math.round(im.height * sc)); cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height); dcCfg().logo = cv.toDataURL('image/png'); dcSave(); dcRender(); }; im.onerror = () => showToast('That image could not be read.', 'error'); im.src = fr.result; }; fr.readAsDataURL(f);
+        }
+    });
+    const _init7 = initStatementTab; initStatementTab = function () { const r = _init7.apply(this, arguments); try { mountDocStyle(); dcRender(); } catch (e) { console.error(e); } return r; };
+    const _swC = switchTab; switchTab = function (t) { const r = _swC.apply(this, arguments); if (t === 'statement') { mountDocStyle(); dcRender(); } return r; };
+
+    mountPivotCard(); mountLedger(); mountMessenger(); mountPersonal(); mountDesigns(); mountDocStyle(); ldLoad();
 })();
 </script>
 </body>
