@@ -1144,9 +1144,10 @@
                             <div class="bg-slate-950 border border-amber-500/30 rounded-xl p-4 space-y-2">
                                 <div class="flex items-center justify-between gap-2">
                                     <div class="text-xs font-bold text-amber-300"><i class="fa-solid fa-code mr-1"></i> Google Apps Script (two-way: pushes entries to the sheet AND lets the app pull sheet edits back)</div>
-                                    <button type="button" onclick="copyAppsScript()" class="bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">Copy Script</button>
+                                    <div class="flex items-center gap-2"><button type="button" onclick="testPictureSync()" class="bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg"><i class="fa-solid fa-image"></i> Test Picture Sync</button><button type="button" onclick="copyAppsScript()" class="bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg">Copy Script</button></div>
                                 </div>
                                 <p class="text-[11px] text-slate-400">In your Google Sheet: Extensions → Apps Script → paste this, replace everything → Deploy → <b>New deployment</b> → Web app (Execute as: Me, Access: Anyone) → paste the /exec URL above. <b>Re-deploy as a NEW VERSION after pasting this update</b> (Deploy → Manage deployments → Edit → New version). For email, also run <b>authorizeEmail</b> once and press Allow – full steps are in Statement → Email panel.</p>
+                                <div id="picture-sync-status" class="text-[11px] font-mono text-slate-400 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2">Picture sync not tested yet. Press “Test Picture Sync” after you deploy the new script.</div>
                                 <textarea id="apps-script-code" readonly rows="12" class="w-full bg-slate-900 border border-slate-700 text-emerald-300 text-[10px] font-mono rounded-lg p-2">// Ullswater Fleet Hub - Google Sheet receiver  (v4: real-time, shared settings, admin log)
 // Ledger tabs: one tab per Data Entry Sheet. Hidden helper tabs: _Config (shared settings) and _AdminLog (change log).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
@@ -3013,6 +3014,21 @@ function doGet(e) {
             sendLogPayload(url, Object.assign({}, logEntry, { data }), sheetTabName, meta);
             if (imgKeys.length) { showToast('Saving picture to the Google Sheet…', 'success'); verifyImageOnSheet(logEntry.id, imgKeys); }
         }
+        async function testPictureSync() {
+            const box = document.getElementById('picture-sync-status');
+            const say = (t, c) => { if (box) { box.textContent = t; box.style.color = c; } };
+            const st = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
+            if (!st.webappId || !String(st.webappId).startsWith('http')) { say('✘ No Web App URL saved above. Paste your /exec URL first.', '#fb7185'); return; }
+            say('Testing…', '#fcd34d'); _imgVer = { t: 0, v: -1, u: '' };
+            const v = await imgScriptVersion(st.webappId);
+            if (v < 0) { say('✘ Cannot reach the Web App URL. Check the URL, internet, and that access is set to “Anyone”.', '#fb7185'); return; }
+            if (v < 10) { say('✘ The DEPLOYED script is version ' + v + ' (needs 10). Copy Script → paste in Apps Script → Save → Deploy → Manage deployments → pencil icon → Version: NEW version → Deploy. Saving alone does not update the live web app.', '#fb7185'); return; }
+            try {
+                const r = await fetch(st.webappId + (st.webappId.includes('?') ? '&' : '?') + 'action=imgcheck&_=' + Date.now(), { cache: 'no-store' }); const j = await r.json();
+                if (!j.drive) { say('✘ Script v' + v + ' is live but has NO Google Drive permission: ' + (j.error || '') + '. In Apps Script choose function “authorizeDrive” → Run → Allow, then deploy a NEW version again.', '#fb7185'); return; }
+                say('✔ Script v' + v + ' is live and Drive works (folder “' + j.folder + '”). Pictures will now show in the sheet. Press the Sync button to resend older tickets.', '#34d399');
+            } catch (e) { say('✘ Drive check failed: ' + e.message, '#fb7185'); }
+        }
         function verifyImageOnSheet(id, keys) {
             [6000, 15000, 30000].forEach((ms, n) => setTimeout(async () => {
                 window._imgVerified = window._imgVerified || {};
@@ -3096,6 +3112,15 @@ function doGet(e) {
             });
             st.removed = before - logs.length;
 
+            // tickets whose picture is still only on this device (old script / no Drive access earlier) -> resend, at most every 5 minutes each
+            window._imgRetry = window._imgRetry || {};
+            const byId = new Map(rows.map(r => [r.id, r]));
+            logs.forEach(l => {
+                if (l.raw || !l.data || !byId.has(l.id) || (l._dirtyAt && now - l._dirtyAt < 20000)) return;
+                const rr = byId.get(l.id).data || {};
+                const missing = Object.keys(l.data).some(k => String(l.data[k]).startsWith('data:image') && !isImgVal(rr[k]));
+                if (missing && now - (window._imgRetry[l.id] || 0) > 300000) { window._imgRetry[l.id] = now; postLogToGoogleSheet(l, l.formName); }
+            });
             // tickets never confirmed on the sheet (e.g. push failed while offline) -> push again
             logs.forEach(l => {
                 if (!l.sheetSynced && !remoteIds.has(l.id) && now - Date.parse(String(l.timestamp).replace(' ', 'T')) > 60000) postLogToGoogleSheet(l, l.formName);
