@@ -1151,7 +1151,7 @@
 // Ledger tabs: one tab per Data Entry Sheet. Hidden helper tabs: _Config (shared settings) and _AdminLog (change log).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
 const EMAIL_TOKEN = 'ULLSWATER-CORP-SECURE-9021';
-const SCRIPT_VERSION = 8;
+const SCRIPT_VERSION = 9;
 // ===== FACEBOOK MESSENGER (optional) - paste your Facebook PAGE ACCESS TOKEN between the quotes =====
 const FB_PAGE_TOKEN = '';
 const FB_API = 'https://graph.facebook.com/v21.0';
@@ -1159,6 +1159,32 @@ const FB_API = 'https://graph.facebook.com/v21.0';
 function J_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 function bump_() { PropertiesService.getScriptProperties().setProperty('rev', Date.now() + '-' + Math.floor(Math.random() * 1000)); }
 function rev_() { return PropertiesService.getScriptProperties().getProperty('rev') || '0'; }
+// ===== PICTURES (v9): images are saved in Google Drive; the sheet cell shows them with =IMAGE() and the app reads them back =====
+const IMG_FOLDER = 'Ullswater Ticket Images';
+function imgFolder_() { const it = DriveApp.getFoldersByName(IMG_FOLDER); return it.hasNext() ? it.next() : DriveApp.createFolder(IMG_FOLDER); }
+function imgSafe_(s) { return String(s).replace(/[^A-Za-z0-9_-]+/g, '_'); }
+function imgUrl_(fileId, size) { size = Number(size) || 500; return 'https://drive.google.com/thumbnail?id=' + fileId + '&amp;sz=w' + size + '-h' + size; }
+function imgIsUrl_(v) { return /^https:\/\/drive\.google\.com\/thumbnail\?id=/.test(String(v)); }
+function imgFormula_(url) { return '=IMAGE("' + url + '",1)'; }
+function imgFromFormula_(f) { const m = /^=IMAGE\("([^"]+)"/i.exec(String(f || '')); return m ? m[1] : ''; }
+function cellVal_(v, f, h) { const u = imgFromFormula_(f); return u ? u : fmt_(v, h); }
+function imgSave_(dataUrl, id, label, size) {
+  const m = /^data:(image\/[A-Za-z0-9.+-]+);base64,(.*)$/.exec(String(dataUrl));
+  if (!m) return '';
+  const folder = imgFolder_(), name = imgSafe_(id) + '__' + imgSafe_(label) + (m[1].indexOf('png') &gt;= 0 ? '.png' : '.jpg');
+  const old = folder.getFilesByName(name); while (old.hasNext()) old.next().setTrashed(true);
+  const f = folder.createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], name));
+  f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return imgUrl_(f.getId(), size);
+}
+function trashImages_(id) {
+  const it = DriveApp.getFoldersByName(IMG_FOLDER); if (!it.hasNext()) return;
+  const fs = it.next().searchFiles("title contains '" + imgSafe_(id) + "__' and trashed = false");
+  while (fs.hasNext()) fs.next().setTrashed(true);
+}
+// Run this ONCE (Run &gt; allow) after pasting v9. It gives the script permission to save pictures in Google Drive.
+function authorizeDrive() { const f = imgFolder_(); Logger.log('Drive OK. Pictures are saved in the folder: ' + f.getName() + '. Now Deploy &gt; Manage deployments &gt; Edit &gt; New version &gt; Deploy.'); }
+
 function helper_(name, headers) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(name);
@@ -1253,6 +1279,7 @@ function doPost(e) {
           for (let i = dids.length - 1; i &gt;= 0; i--) if (String(dids[i][0]) === String(d.id)) dsh.deleteRow(i + 2);
         }
       }
+      try { trashImages_(d.id); } catch (te) {}
       bump_();
       return J_({ ok: true, deleted: d.id });
     }
@@ -1262,6 +1289,14 @@ function doPost(e) {
     const row = { 'Ticket ID': d.id, 'Timestamp': d.timestamp, 'Operator': d.user, 'Form Name': d.formName, 'Status': d.status || '',
       'Scanned Ticket': d['Scanned Ticket'] || d.sourceTicket || '' };
     Object.keys(d.data || {}).forEach(function (k) { if (k !== 'Scanned Ticket') row[k] = d.data[k]; });
+    const imgCols = {}, meta = d.imageMeta || {};
+    Object.keys(row).forEach(function (k) {
+      const v = row[k];
+      if (typeof v === 'string' &amp;&amp; v.indexOf('data:image/') === 0) {
+        let url = ''; try { url = imgSave_(v, d.id, k, (meta[k] || {}).size); } catch (ie) { url = ''; }
+        row[k] = url ? imgFormula_(url) : ''; if (url) imgCols[k] = meta[k] || null;
+      } else if (imgIsUrl_(v)) { row[k] = imgFormula_(v); imgCols[k] = meta[k] || null; }
+    });
     Object.keys(row).forEach(function (k) { if (headers.indexOf(k) &lt; 0) { headers.push(k); sh.getRange(1, headers.length).setValue(k); } });
     const values = headers.map(function (h) { return row[h] !== undefined ? row[h] : ''; });
     const idCol = headers.indexOf('Ticket ID') + 1;
@@ -1271,6 +1306,12 @@ function doPost(e) {
       for (let i = 0; i &lt; ids.length; i++) if (String(ids[i][0]) === String(d.id)) { target = i + 2; break; }
     }
     if (target) sh.getRange(target, 1, 1, values.length).setValues([values]); else sh.appendRow(values);
+    const rowNo = target || sh.getLastRow();
+    Object.keys(imgCols).forEach(function (k) {
+      const m = imgCols[k], col = headers.indexOf(k) + 1; if (!m || col &lt; 1) return;
+      const size = Number(m.size) || Math.max(Number(m.w) || 0, Number(m.h) || 0);
+      try { if (size) { sh.setColumnWidth(col, size); sh.setRowHeight(rowNo, Math.max(21, Number(m.h) || size)); } } catch (se) {}
+    });
     bump_();
     return J_({ ok: true });
   } finally { lock.releaseLock(); }
@@ -1364,7 +1405,7 @@ function doGet(e) {
     ss.getSheets().forEach(function (sh) {
       const tab = sh.getName();
       if (sh.getLastColumn() &lt; 1 || sh.getLastRow() &lt; 1) return;
-      const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+      const rng = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()), vals = rng.getValues(), fvals = rng.getFormulas();
       const headers = vals[0].map(String);
       const iId = headers.indexOf('Ticket ID');
       if (tab.charAt(0) === '_') return;           // hidden helper tabs
@@ -1377,7 +1418,7 @@ function doGet(e) {
           const rw = vals[r]; let any = false;
           for (let c = 0; c &lt; rw.length; c++) { if (String(rw[c]).trim() !== '') { any = true; break; } }
           if (!any) continue;
-          const dd = {}; hd.forEach(function (h, c) { dd[h] = fmt_(rw[c], h); });
+          const dd = {}; hd.forEach(function (h, c) { dd[h] = cellVal_(rw[c], (fvals[r] || [])[c], h); });
           out.rows.push({ id: 'RAW-' + slug + '-' + (r + 1), timestamp: '', user: 'google-sheet', formName: tab, status: 'VALID', sourceTicket: '', data: dd, raw: true });
           rc++;
         }
@@ -1398,7 +1439,7 @@ function doGet(e) {
         let ts = iTs &gt;= 0 ? fmt_(row[iTs], 'Timestamp') : '';
         if (!ts) { ts = nowStr; if (iTs &gt;= 0) sh.getRange(r + 1, iTs + 1).setValue(ts); }
         const data = {};
-        headers.forEach(function (h, c) { if (h &amp;&amp; !SKIP[h]) data[h] = fmt_(row[c], h); });
+        headers.forEach(function (h, c) { if (h &amp;&amp; !SKIP[h]) data[h] = cellVal_(row[c], (fvals[r] || [])[c], h); });
         const scan = iSc &gt;= 0 ? fmt_(row[iSc], '') : '';
         if (scan) data['Scanned Ticket'] = scan;
         out.rows.push({ id: id, timestamp: ts, user: (iOp &gt;= 0 ? fmt_(row[iOp], '') : '') || 'sheet', formName: tab,
@@ -2594,6 +2635,52 @@ function doGet(e) {
             return true;
         }
 
+
+        // ===== Image field: source (Camera / Gallery / Files) + size (S 250 / M 500 / L 750 / XL 1000 px) =====
+        const IMG_SIZES = { S: 250, M: 500, L: 750, XL: 1000 };
+        const IMG_QUALITY = { S: 0.8, M: 0.75, L: 0.7, XL: 0.65 };
+        const IMG_SOURCES = [['any', 'Ask each time (Camera / Gallery / Files)'], ['camera', 'Always Camera'], ['gallery', 'Always Gallery'], ['files', 'Always Files']];
+        function imgSizeKey(field) { return field && IMG_SIZES[field.imgSize] ? field.imgSize : 'M'; }
+        function imgSrcOf(v) { v = String(v == null ? '' : v).trim(); const m = /^=IMAGE\("([^"]+)"/i.exec(v); return m ? m[1] : v; }
+        function isImgVal(v) {
+            const t = imgSrcOf(v);
+            return /^data:image\//.test(t) || /^https:\/\/drive\.google\.com\/thumbnail\?id=/.test(t) || /^https:\/\/lh3\.googleusercontent\.com\//.test(t) || /^https?:\/\/\S+\.(png|jpe?g|gif|webp)(\?\S*)?$/i.test(t);
+        }
+        function ledgerThumb(logId, k, v, px) {
+            px = px || 32;
+            return `<img src="${imgSrcOf(v)}" referrerpolicy="no-referrer" loading="lazy" alt="Image" title="Click to enlarge" onclick="viewLogImage('${logId}','${encodeURIComponent(k)}')" style="width:${px}px;height:${px}px;object-fit:cover;display:inline-block;vertical-align:middle;border-radius:6px;border:1px solid #475569;cursor:zoom-in">`;
+        }
+        function viewImageSrc(src) {
+            const ov = document.createElement('div');
+            ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(2,6,23,.92);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out';
+            ov.onclick = () => ov.remove();
+            const im = document.createElement('img'); im.referrerPolicy = 'no-referrer'; im.src = src;
+            im.style.cssText = 'max-width:100%;max-height:100%;border-radius:8px;background:#fff'; ov.appendChild(im); document.body.appendChild(ov);
+        }
+        function viewLogImage(logId, enc) {
+            const log = logs.find(l => l.id === logId); if (!log || !log.data) return;
+            const v = log.data[decodeURIComponent(enc)]; if (v) viewImageSrc(imgSrcOf(v));
+        }
+        function keepLocalImages(localData, remoteData) {
+            const out = Object.assign({}, remoteData || {});
+            Object.keys(localData || {}).forEach(k => {
+                const lv = String(localData[k] == null ? '' : localData[k]);
+                if (lv.startsWith('data:image') && !isImgVal(out[k])) out[k] = lv;   // picture not on the sheet yet: keep the local copy
+            });
+            return out;
+        }
+        function imgDims(dataUrl) { return new Promise(res => { const i = new Image(); i.onload = () => res({ w: i.naturalWidth || i.width, h: i.naturalHeight || i.height }); i.onerror = () => res({ w: 0, h: 0 }); i.src = dataUrl; }); }
+        let _imgVer = { t: 0, v: -1, u: '' };
+        async function imgScriptVersion(url) {
+            if (_imgVer.u === url && _imgVer.v >= 0 && Date.now() - _imgVer.t < 60000) return _imgVer.v;
+            try { const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'action=ping&_=' + Date.now(), { cache: 'no-store' }); const j = await r.json(); const v = +j.version || 0; _imgVer = { t: Date.now(), v, u: url }; return v; }
+            catch (e) { return -1; }
+        }
+        function imgConfiguredSize(logEntry, label) {
+            const form = forms.find(f => f.id === logEntry.formId), fld = form ? form.fields.find(f => f.type === 'image' && f.label === label) : null;
+            return fld ? IMG_SIZES[imgSizeKey(fld)] : 0;
+        }
+
         function buildFieldInputHTML(field) {
             const id = field.id;
             const IN = 'w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5';
@@ -2626,8 +2713,18 @@ function doGet(e) {
                     return `<div class="flex gap-2"><input type="text" id="field_${id}" oninput="triggerFieldCalculations()" placeholder="Type or read text with camera..." class="${IN}"><button type="button" onclick="openScannerModal('${id}')" class="${BTN}"><i class="fa-solid fa-camera"></i> OCR</button></div>`;
                 case 'nfc':
                     return `<div class="flex gap-2"><input type="text" id="field_${id}" placeholder="Tap tag or type tag ID..." class="${IN}"><button type="button" onclick="readFieldNfc('${id}')" class="${BTN}"><i class="fa-solid fa-tag"></i> Tap Tag</button></div>`;
-                case 'image':
-                    return `<input type="hidden" id="field_${id}" value=""><div class="flex gap-2"><label class="${BTN} cursor-pointer"><i class="fa-solid fa-camera"></i> Take / Choose Photo<input type="file" accept="image/*" capture="environment" class="hidden" onchange="handleFieldImage(this,'${id}')"></label><button type="button" onclick="setFieldImage('${id}','')" class="${GHOST}">Clear</button></div><img id="imgprev_${id}" class="hidden max-h-40 rounded-xl border border-slate-700" alt="">`;
+                case 'image': {
+                    const key = imgSizeKey(field), px = IMG_SIZES[key];
+                    const mode = ['camera', 'gallery', 'files'].includes(field.imgSource) ? field.imgSource : 'any';
+                    const defs = {
+                        camera: ['fa-camera', 'Take Photo', 'accept="image/*" capture="environment"'],
+                        gallery: ['fa-images', 'Gallery', 'accept="image/*"'],
+                        files: ['fa-folder-open', 'Files', 'accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.heic,.heif"']
+                    };
+                    const kinds = mode === 'any' ? ['camera', 'gallery', 'files'] : [mode];
+                    const btns = kinds.map(k => `<button type="button" onclick="fieldImgPick('${id}','${k}')" class="${BTN}"><i class="fa-solid ${defs[k][0]}"></i> ${defs[k][1]}</button><input type="file" ${defs[k][2]} class="hidden" id="imgfile_${k}_${id}" onchange="handleFieldImage(this,'${id}')">`).join('');
+                    return `<input type="hidden" id="field_${id}" value=""><div class="flex flex-wrap gap-2 items-center">${btns}<button type="button" onclick="setFieldImage('${id}','')" class="${GHOST}">Clear</button><span class="text-[10px] text-slate-500">Size ${key} · up to ${px}px</span></div><img id="imgprev_${id}" class="hidden rounded-xl border border-slate-700" style="max-width:min(100%,${px}px)" alt=""><div id="imginfo_${id}" class="text-[10px] text-slate-500"></div>`;
+                }
                 case 'signature':
                     return `<input type="hidden" id="field_${id}" value=""><canvas id="sig_${id}" class="w-full rounded-xl border border-slate-700 bg-white" style="height:140px;touch-action:none"></canvas><button type="button" onclick="clearSignature('${id}')" class="${GHOST}">Clear Signature</button>`;
                 case 'location':
@@ -2694,27 +2791,60 @@ function doGet(e) {
             if (h) h.value = [...document.querySelectorAll(`#list_${id} input:checked`)].map(i => i.value).join(', ');
         }
         function setFieldImage(id, dataUrl) {
-            const h = document.getElementById(`field_${id}`), p = document.getElementById(`imgprev_${id}`);
+            const h = document.getElementById(`field_${id}`), p = document.getElementById(`imgprev_${id}`), n = document.getElementById(`imginfo_${id}`);
             if (h) h.value = dataUrl || '';
             if (p) { if (dataUrl) { p.src = dataUrl; p.classList.remove('hidden'); } else { p.removeAttribute('src'); p.classList.add('hidden'); } }
+            if (n && !dataUrl) n.textContent = '';
+        }
+        function fieldImgPick(id, kind) {
+            const coarse = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+            if (kind === 'camera' && !coarse && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) { fieldCamOpen(id); return; }   // computers: live camera window
+            const el = document.getElementById(`imgfile_${kind}_${id}`); if (el) el.click();
+        }
+        async function fieldCamOpen(id) {
+            let stream;
+            try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }); }
+            catch (e) { showToast('Camera not available (allow camera access, use HTTPS)', 'error'); const el = document.getElementById(`imgfile_camera_${id}`); if (el) el.click(); return; }
+            const ov = document.createElement('div');
+            ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(2,6,23,.95);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px';
+            const v = document.createElement('video'); v.autoplay = true; v.playsInline = true; v.muted = true; v.srcObject = stream; v.style.cssText = 'max-width:100%;max-height:70vh;border-radius:12px;background:#000';
+            const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:10px';
+            const mk = (t, c) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = t; b.style.cssText = `background:${c};color:#fff;font-weight:600;font-size:13px;padding:10px 18px;border-radius:12px`; return b; };
+            const cap = mk('Capture', '#2563eb'), can = mk('Cancel', '#475569');
+            const close = () => { stream.getTracks().forEach(t => t.stop()); ov.remove(); };
+            can.onclick = close;
+            cap.onclick = () => {
+                if (!v.videoWidth) return;
+                const cv = document.createElement('canvas'); cv.width = v.videoWidth; cv.height = v.videoHeight; cv.getContext('2d').drawImage(v, 0, 0);
+                const url = cv.toDataURL('image/jpeg', 0.92); close(); resizeFieldImage(url, id);
+            };
+            bar.append(cap, can); ov.append(v, bar); document.body.appendChild(ov);
         }
         function handleFieldImage(input, id) {
             const file = input.files && input.files[0];
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = e => {
-                const img = new Image();
-                img.onload = () => {
-                    const max = 480, scale = Math.min(1, max / Math.max(img.width, img.height));
-                    const cv = document.createElement('canvas');
-                    cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
-                    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-                    setFieldImage(id, cv.toDataURL('image/jpeg', 0.5));
-                };
-                img.src = e.target.result;
-            };
+            reader.onload = e => resizeFieldImage(e.target.result, id);
+            reader.onerror = () => showToast('Could not read that file', 'error');
             reader.readAsDataURL(file);
             input.value = '';
+        }
+        function resizeFieldImage(dataUrl, id) {
+            const form = forms.find(f => f.id === activeFormId), field = form ? form.fields.find(f => f.id === id) : null;
+            const key = imgSizeKey(field), max = IMG_SIZES[key];
+            const img = new Image();
+            img.onerror = () => showToast('That file is not a picture this browser can open', 'error');
+            img.onload = () => {
+                const w0 = img.naturalWidth || img.width, h0 = img.naturalHeight || img.height;
+                const scale = Math.min(1, max / Math.max(w0, h0));
+                const cv = document.createElement('canvas');
+                cv.width = Math.max(1, Math.round(w0 * scale)); cv.height = Math.max(1, Math.round(h0 * scale));
+                const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(img, 0, 0, cv.width, cv.height);
+                const out = cv.toDataURL('image/jpeg', IMG_QUALITY[key]);
+                setFieldImage(id, out);
+                const n = document.getElementById(`imginfo_${id}`); if (n) n.textContent = `${cv.width}×${cv.height}px · about ${Math.round(out.length * 0.75 / 1024)} KB`;
+            };
+            img.src = dataUrl;
         }
         function initSignature(id) {
             const cv = document.getElementById(`sig_${id}`);
@@ -2836,7 +2966,7 @@ function doGet(e) {
             pendingScanRef = '';
 
             logs.unshift(newLog);
-            localStorage.setItem('ullswater_logs', JSON.stringify(logs));
+            try { localStorage.setItem('ullswater_logs', JSON.stringify(logs)); } catch (qe) { showToast('Device storage is full — the ticket is sent to the sheet, but sync and clear space soon', 'error'); }
             renderLedgerTable();
             postLogToGoogleSheet(newLog, form.name);
             setScannedRefField(usedScanRef, ticketId);
@@ -2844,21 +2974,40 @@ function doGet(e) {
             showToast(`Ticket ${ticketId} created & logged!`, 'success');
         }
 
+        function sendLogPayload(url, logEntry, sheetTabName, imageMeta) {
+            fetch(url, {
+                method: 'POST', mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...logEntry,
+                    imageMeta: imageMeta || undefined,
+                    targetTab: sheetTabName,
+                    sourceTicket: logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || '',
+                    scannedFromTicket: logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || '',
+                    'Scanned Ticket': logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || ''
+                })
+            });
+        }
+        async function postLogWithImages(url, logEntry, sheetTabName) {
+            const ver = await imgScriptVersion(url);
+            if (ver < 0) return;                                  // endpoint unreachable: stays "unsynced" and is retried by the sheet sync
+            const data = Object.assign({}, logEntry.data), meta = {};
+            for (const k of Object.keys(data)) {
+                if (!String(data[k]).startsWith('data:image')) continue;
+                if (ver < 9) { data[k] = ''; continue; }          // old script cannot take pictures (a cell holds max 50,000 characters)
+                const d = await imgDims(data[k]);
+                meta[k] = { w: d.w, h: d.h, size: imgConfiguredSize(logEntry, k) || Math.max(d.w, d.h) };
+            }
+            if (ver < 9) showToast('Pictures were NOT sent: update the Google Apps Script to v9 (Connection tab → Copy Script), run authorizeDrive once, then deploy a new version', 'error');
+            sendLogPayload(url, Object.assign({}, logEntry, { data }), sheetTabName, meta);
+        }
         function postLogToGoogleSheet(logEntry, sheetTabName) {
             if (logEntry && logEntry.raw) return;   // plain Google tabs are read-only
             const settings = JSON.parse(localStorage.getItem('ullswater_connection_settings')) || {};
-            if(settings.webappId && settings.webappId.startsWith('http')) {
-                fetch(settings.webappId, {
-                    method: 'POST', mode: 'no-cors',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        ...logEntry,
-                        targetTab: sheetTabName,
-                        sourceTicket: logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || '',
-                        scannedFromTicket: logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || '',
-                        'Scanned Ticket': logEntry.sourceTicket || (logEntry.data && logEntry.data[SCAN_REF_LABEL]) || ''
-                    })
-                });
+            if (settings.webappId && settings.webappId.startsWith('http')) {
+                const hasImg = logEntry && logEntry.data && Object.values(logEntry.data).some(v => String(v).startsWith('data:image'));
+                if (hasImg) postLogWithImages(settings.webappId, logEntry, sheetTabName);
+                else sendLogPayload(settings.webappId, logEntry, sheetTabName, null);
             }
         }
 
@@ -2910,7 +3059,7 @@ function doGet(e) {
                 if (!sheetEq(local.user, r.user) && r.user !== 'sheet') { local.user = r.user; changed = true; }
                 if (local.status !== r.status) { local.status = r.status; changed = true; }
                 if (!sheetEq(local.sourceTicket || '', r.sourceTicket || '')) { local.sourceTicket = r.sourceTicket || ''; changed = true; }
-                if (!sheetDataEq(local.data, r.data)) { local.data = r.data || {}; changed = true; }
+                { const rd = keepLocalImages(local.data, r.data); if (!sheetDataEq(local.data, rd)) { local.data = rd; changed = true; } }
                 if (changed) st.updated++;
             });
 
@@ -3039,7 +3188,7 @@ function doGet(e) {
                     <td class="p-3.5 text-slate-400">${log.timestamp}</td>
                     <td class="p-3.5 text-slate-200">@${log.user}</td>
                     <td class="p-3.5 text-blue-300 font-semibold">${log.formName}</td>
-                    <td class="p-3.5 text-slate-300 truncate max-w-xs">${Object.entries(log.data || {}).filter(([k]) => k !== SCAN_REF_LABEL).map(([k, v]) => `${k}: ${String(v).startsWith('data:image') ? '[Image]' : v}`).join(' | ')}</td>
+                    <td class="p-3.5 text-slate-300 truncate max-w-xs">${Object.entries(log.data || {}).filter(([k]) => k !== SCAN_REF_LABEL).map(([k, v]) => `${k}: ${isImgVal(v) ? ledgerThumb(log.id, k, v) : v}`).join(' | ')}</td>
                     <td class="p-3.5">${log.status === 'VOID'
                         ? '<span class="bg-rose-500/10 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold">VOID</span>'
                         : '<span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full text-[10px]">VALID</span>'}</td>
@@ -3167,8 +3316,8 @@ function doGet(e) {
             let csvValues = [`"${log.id}"`, `"${log.timestamp}"`, `"${log.user}"`, `"${log.formName}"`];
 
             Object.entries(log.data || {}).forEach(([k, v]) => {
-                const isImg = String(v).startsWith('data:image');
-                tbody.innerHTML += `<tr><td class="p-2 font-bold text-slate-700">${k}</td><td class="p-2 text-slate-900">${isImg ? `<img src="${v}" style="max-height:60px">` : v}</td></tr>`;
+                const isImg = isImgVal(v);
+                tbody.innerHTML += `<tr><td class="p-2 font-bold text-slate-700">${k}</td><td class="p-2 text-slate-900">${isImg ? `<img src="${imgSrcOf(v)}" referrerpolicy="no-referrer" style="max-height:120px;max-width:100%;cursor:zoom-in" onclick="viewLogImage('${log.id}','${encodeURIComponent(k)}')">` : v}</td></tr>`;
                 csvHeaders.push(`"${k}"`);
                 csvValues.push(`"${(isImg ? '[Image]' : String(v)).replace(/"/g, '""')}"`);
             });
@@ -3885,7 +4034,8 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
             const is58 = layout === '58mm';
             const rows = Array.from(document.querySelectorAll('#ticket-payload-table tr')).map(tr => {
                 const td = tr.querySelectorAll('td');
-                return `<tr><td class="k">${escHtml(td[0] ? td[0].innerText : '')}</td><td class="v">${escHtml(td[1] ? td[1].innerText : '')}</td></tr>`;
+                const pim = td[1] ? td[1].querySelector('img') : null;
+                return `<tr><td class="k">${escHtml(td[0] ? td[0].innerText : '')}</td><td class="v">${pim ? `<img src="${escHtml(pim.getAttribute('src'))}" style="max-width:100%;max-height:30mm">` : escHtml(td[1] ? td[1].innerText : '')}</td></tr>`;
             }).join('');
             let qrImg = '';
             if (currentQrCanvas) {
@@ -3961,7 +4111,8 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
             const log = logs.find(l => l.id === ticketId);
             if(!log) return;
             const container = document.getElementById('edit-modal-fields-container');
-            container.innerHTML = Object.entries(log.data || {}).map(([k, v]) => `
+            container.innerHTML = Object.entries(log.data || {}).map(([k, v]) => isImgVal(v) ? `
+                <div><label class="block text-xs font-medium text-slate-400 uppercase mb-1">${k}</label><div class="flex items-center gap-3">${ledgerThumb(log.id, k, v, 64)}<span class="text-[11px] text-slate-400">Picture is kept as it is (retake it on the entry form).</span></div><input type="hidden" id="edit_field_${k}" value="${imgSrcOf(v)}"></div>` : `
                 <div><label class="block text-xs font-medium text-slate-400 uppercase mb-1">${k}</label><input type="text" id="edit_field_${k}" value="${v}" class="w-full bg-slate-950 border border-slate-700 text-white text-sm rounded-xl px-3.5 py-2.5"></div>
             `).join('');
             document.getElementById('edit-modal').classList.remove('hidden');
@@ -4123,6 +4274,10 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
             field.calc = calc; field.formula = buildFormulaFromTerms(calc.terms);
             commitFormDesign(); renderFormEditorWorkspace();
         }
+        function setImgCfg(formId, fieldId, prop, val) {
+            const { field } = findDesignField(formId, fieldId); if (!field) return;
+            field[prop] = val; commitFormDesign(); renderFormEditorWorkspace();
+        }
         function setFieldFlag(formId, fieldId, prop, checked) {
             const { field } = findDesignField(formId, fieldId); if (!field) return;
             field[prop] = !!checked; commitFormDesign(); renderFormEditorWorkspace();
@@ -4208,6 +4363,20 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
                     </div>`;
             };
 
+            const imgPanel = field => `
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-2.5 space-y-2">
+                    <div class="text-[10px] font-bold uppercase tracking-wider text-cyan-400"><i class="fa-solid fa-image"></i> Image Settings</div>
+                    <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
+                        <label class="flex items-center gap-2 text-xs text-slate-300">Source
+                            <select onchange="setImgCfg('${form.id}','${field.id}','imgSource',this.value)" class="${SEL}">${IMG_SOURCES.map(o => `<option value="${o[0]}" ${(field.imgSource || 'any') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-slate-300">Size
+                            <select onchange="setImgCfg('${form.id}','${field.id}','imgSize',this.value)" class="${SEL}">${Object.keys(IMG_SIZES).map(k => `<option value="${k}" ${imgSizeKey(field) === k ? 'selected' : ''}>${k} (${IMG_SIZES[k]}px)</option>`).join('')}</select>
+                        </label>
+                    </div>
+                    <p class="text-[10px] text-slate-500">The picture is resized so its longest side is at most this size, saved in Google Drive, shown in the Google Sheet cell at this size, and synced back to the Ledger ticket.</p>
+                </div>`;
+
             const accessPanel = field => `
                 <details class="bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5">
                     <summary class="text-[11px] text-slate-300 cursor-pointer"><i class="fa-solid fa-user-lock text-blue-400"></i> User Access: <span id="access_sum_${field.id}" class="font-semibold">${accessSummary(field)}</span></summary>
@@ -4248,6 +4417,7 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
                                 <label class="flex items-center gap-1.5 text-xs text-slate-300"><input type="checkbox" class="accent-blue-600" ${field.hidden ? 'checked' : ''} onchange="setFieldFlag('${form.id}', '${field.id}', 'hidden', this.checked)"> Hidden</label>
                             </div>
                             ${field.type === 'computation' ? calcBuilder(field) : ''}
+                            ${field.type === 'image' ? imgPanel(field) : ''}
                             ${field.type === 'static' ? `<textarea rows="2" placeholder="Static text shown on the form..." onchange="updateFieldProperty('${form.id}', '${field.id}', 'text', this.value)" class="w-full bg-slate-900 border border-slate-800 text-slate-200 text-xs px-3 py-1.5 rounded">${escH(field.text || '')}</textarea>` : ''}
                             ${accessPanel(field)}
                         </div>
@@ -4453,7 +4623,7 @@ ${A.add ? `<tr class="r-sub"><td colspan="2">Total Additions</td><td class="a-r"
             const rows = list.map(l => {
                 const d = l.data || {};
                 const fixed = [l.id, l.timestamp, l.user, l.formName, l.formId || '', l.status || 'VALID', l.sourceTicket || d[SCAN_REF_LABEL] || ''];
-                return fixed.concat(cols.map(c => { const v = d[c]; return String(v == null ? '' : v).startsWith('data:image') ? '[Image]' : v; }));
+                return fixed.concat(cols.map(c => { const v = d[c]; const t = String(v == null ? '' : v); return t.startsWith('data:image') ? '[Image]' : (isImgVal(t) ? imgSrcOf(t) : v); }));
             });
             return '\ufeff' + [head].concat(rows).map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
         }
