@@ -1151,7 +1151,7 @@
 // Ledger tabs: one tab per Data Entry Sheet. Hidden helper tabs: _Config (shared settings) and _AdminLog (change log).
 const FIXED = ['Ticket ID','Timestamp','Operator','Form Name','Scanned Ticket','Status'];
 const EMAIL_TOKEN = 'ULLSWATER-CORP-SECURE-9021';
-const SCRIPT_VERSION = 9;
+const SCRIPT_VERSION = 10;
 // ===== FACEBOOK MESSENGER (optional) - paste your Facebook PAGE ACCESS TOKEN between the quotes =====
 const FB_PAGE_TOKEN = '';
 const FB_API = 'https://graph.facebook.com/v21.0';
@@ -1174,7 +1174,7 @@ function imgSave_(dataUrl, id, label, size) {
   const folder = imgFolder_(), name = imgSafe_(id) + '__' + imgSafe_(label) + (m[1].indexOf('png') &gt;= 0 ? '.png' : '.jpg');
   const old = folder.getFilesByName(name); while (old.hasNext()) old.next().setTrashed(true);
   const f = folder.createFile(Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], name));
-  f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  try { f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (se) { throw new Error('Drive sharing is blocked for this Google account (' + se.message + ') - the picture cannot show in the sheet'); }
   return imgUrl_(f.getId(), size);
 }
 function trashImages_(id) {
@@ -1289,12 +1289,13 @@ function doPost(e) {
     const row = { 'Ticket ID': d.id, 'Timestamp': d.timestamp, 'Operator': d.user, 'Form Name': d.formName, 'Status': d.status || '',
       'Scanned Ticket': d['Scanned Ticket'] || d.sourceTicket || '' };
     Object.keys(d.data || {}).forEach(function (k) { if (k !== 'Scanned Ticket') row[k] = d.data[k]; });
-    const imgCols = {}, meta = d.imageMeta || {};
+    const imgCols = {}, imgErr = {}, meta = d.imageMeta || {};
     Object.keys(row).forEach(function (k) {
       const v = row[k];
       if (typeof v === 'string' &amp;&amp; v.indexOf('data:image/') === 0) {
-        let url = ''; try { url = imgSave_(v, d.id, k, (meta[k] || {}).size); } catch (ie) { url = ''; }
-        row[k] = url ? imgFormula_(url) : ''; if (url) imgCols[k] = meta[k] || null;
+        let url = '';
+        try { url = imgSave_(v, d.id, k, (meta[k] || {}).size); } catch (ie) { imgErr[k] = String(ie.message || ie); try { log_(d.user, 'Picture NOT saved', d.id, k + ': ' + imgErr[k]); } catch (le) {} }
+        row[k] = url ? imgFormula_(url) : ('PICTURE NOT SAVED: ' + (imgErr[k] || 'unknown error')); if (url) imgCols[k] = meta[k] || null;
       } else if (imgIsUrl_(v)) { row[k] = imgFormula_(v); imgCols[k] = meta[k] || null; }
     });
     Object.keys(row).forEach(function (k) { if (headers.indexOf(k) &lt; 0) { headers.push(k); sh.getRange(1, headers.length).setValue(k); } });
@@ -1313,7 +1314,7 @@ function doPost(e) {
       try { if (size) { sh.setColumnWidth(col, size); sh.setRowHeight(rowNo, Math.max(21, Number(m.h) || size)); } } catch (se) {}
     });
     bump_();
-    return J_({ ok: true });
+    return J_({ ok: true, imgErrors: imgErr });
   } finally { lock.releaseLock(); }
 }
 
@@ -1370,6 +1371,10 @@ function fmt_(v, h) {
 
 function doGet(e) {
   const p = (e &amp;&amp; e.parameter) || {};
+  if (p.action === 'imgcheck') {          // the app asks this before sending a picture
+    try { const fo = imgFolder_(); return J_({ ok: true, drive: true, folder: fo.getName(), version: SCRIPT_VERSION }); }
+    catch (ie) { return J_({ ok: true, drive: false, error: String(ie.message || ie), version: SCRIPT_VERSION }); }
+  }
   if (p.action === 'ping') return J_({ ok: true, rev: rev_(), version: SCRIPT_VERSION });   // tiny + fast: the app asks every few seconds
   if (p.action === 'emailresult') {
     const raw = CacheService.getScriptCache().get('email_' + String(p.id || ''));
@@ -2991,15 +2996,33 @@ function doGet(e) {
         async function postLogWithImages(url, logEntry, sheetTabName) {
             const ver = await imgScriptVersion(url);
             if (ver < 0) return;                                  // endpoint unreachable: stays "unsynced" and is retried by the sheet sync
-            const data = Object.assign({}, logEntry.data), meta = {};
+            let driveErr = '';
+            if (ver >= 10) {
+                try { const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'action=imgcheck&_=' + Date.now(), { cache: 'no-store' }); const j = await r.json(); if (!j.drive) driveErr = j.error || 'Google Drive access is missing'; } catch (e) {}
+            }
+            const data = Object.assign({}, logEntry.data), meta = {}, imgKeys = [];
             for (const k of Object.keys(data)) {
                 if (!String(data[k]).startsWith('data:image')) continue;
-                if (ver < 9) { data[k] = ''; continue; }          // old script cannot take pictures (a cell holds max 50,000 characters)
+                if (ver < 10 || driveErr) { data[k] = ''; continue; }   // old script / no Drive access: a cell holds max 50,000 characters, so a picture cannot be sent as text
+                imgKeys.push(k);
                 const d = await imgDims(data[k]);
                 meta[k] = { w: d.w, h: d.h, size: imgConfiguredSize(logEntry, k) || Math.max(d.w, d.h) };
             }
-            if (ver < 9) showToast('Pictures were NOT sent: update the Google Apps Script to v9 (Connection tab → Copy Script), run authorizeDrive once, then deploy a new version', 'error');
+            if (ver < 10) showToast('Picture NOT sent to the sheet: update the Google Apps Script to v10 (Connection tab → Copy Script), run authorizeDrive once, then Deploy → New version', 'error');
+            else if (driveErr) showToast('Picture NOT sent to the sheet: ' + driveErr + '. In Apps Script run authorizeDrive, then Deploy → New version', 'error');
             sendLogPayload(url, Object.assign({}, logEntry, { data }), sheetTabName, meta);
+            if (imgKeys.length) { showToast('Saving picture to the Google Sheet…', 'success'); verifyImageOnSheet(logEntry.id, imgKeys); }
+        }
+        function verifyImageOnSheet(id, keys) {
+            [6000, 15000, 30000].forEach((ms, n) => setTimeout(async () => {
+                window._imgVerified = window._imgVerified || {};
+                if (window._imgVerified[id]) return;
+                try { await pullFromSheet(true); } catch (e) {}
+                const lg = logs.find(l => l.id === id); if (!lg) return;
+                const ok = keys.every(k => { const v = String((lg.data || {})[k] || ''); return !v.startsWith('data:image') && isImgVal(v); });
+                if (ok) { window._imgVerified[id] = 1; showToast('Picture is on the Google Sheet ✔ (' + id + ')', 'success'); }
+                else if (n === 2) showToast('Picture is NOT on the Google Sheet yet (' + id + '). Open the sheet cell to see the reason, check Apps Script v10 + authorizeDrive + a NEW deployment, then press Sync.', 'error');
+            }, ms));
         }
         function postLogToGoogleSheet(logEntry, sheetTabName) {
             if (logEntry && logEntry.raw) return;   // plain Google tabs are read-only
